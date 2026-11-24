@@ -1,0 +1,59 @@
+# Unreal build output and caches (rebuilt by the engine)
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/*
+!Build/*/
+Build/*/**
+!Build/**/*.ini
+!Build/**/*.png
+!Build/**/*.xml
+
+# Plugin build output
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# Generated IDE files (Unreal regenerates them: Tools > Refresh Visual Studio Code Project)
+.vs/
+.vscode/
+.idea/
+*.sln
+*.slnx
+*.code-workspace
+compileCommands_*/
+compileCommands_*.json
+.ignore
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.suo
+*.user
+
+# Compiled debug leftovers (build output itself lives in Binaries/ and Intermediate/;
+# .dll / .lib are not ignored so third-party libraries such as an ONNX runtime can be committed)
+*.pdb
+*.exp
+*.ilk
+
+# Packaged builds
+*.apk
+*.aab
+*.obb
+*.ipa
+
+# Python (ML / prototype scripts)
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
