@@ -49,6 +49,8 @@ __pycache__/
 .venv/
 venv/
 .ipynb_checkpoints/
+# Downloaded / exported weights (can be recreated; see Tools/ObjectDetection/README.md)
+Tools/ObjectDetection/Models/
 
 # Local Claude Code settings
 .claude/settings.local.json
