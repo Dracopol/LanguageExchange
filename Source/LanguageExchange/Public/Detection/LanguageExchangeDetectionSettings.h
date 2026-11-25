@@ -44,7 +44,7 @@ private:
 	// On Android: the same model as an ONNX file, relative to Content/, run with ONNX Runtime for Android.
 	// Packaged through "Additional Non-Asset Directories to Package" (DefaultGame.ini).
 	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection|Android")
-	FString OnnxModelFile = TEXT("LanguageExchange/Detection/Onnx/yolo11n.onnx");
+	FString OnnxModelFile = TEXT("LanguageExchange/Detection/Onnx/yolo11s_320.onnx");
 
 	// On Android: CPU threads for ONNX Runtime. Measured on Quest 3 (YOLO11n, 640 px): 4 threads are hardly faster
 	// than 2 but take cores from rendering (3-5 stale frames per second instead of none)

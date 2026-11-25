@@ -35,7 +35,13 @@ Planned pieces:
 
 1. Done: PC, Python, webcam (`Tools/ObjectDetection`, see its README).
 2. Done: Unreal on PC, webcam: run the same model as ONNX through NNE and show the detected names.
-3. Current: Unreal on Quest: use the passthrough camera image and run the model on the headset; measure speed.
+3. Done: Unreal on Quest: use the passthrough camera image and run the model on the headset; measure speed.
+   Result: standalone works (device plan A). YOLO11s at 320 px on ONNX Runtime + XNNPACK (2 threads), ~120 ms.
+4. Next: make detections visible in VR (e.g. a label floating at the detected object, which needs the camera pose
+   and `ViewportPointToWorldSpaceRay`), then selection by pointing (and detecting on a crop around it).
+
+Open for later: LiteRT (option B) as a comparison to ONNX Runtime; display rate 90/120 Hz; a world-space status
+display instead of the 2D overlay (not visible in VR).
 
 Riskiest open questions: passthrough camera access from Unreal (Meta's samples target Unity first), and NNE
 performance on Quest.
@@ -162,6 +168,23 @@ performance on Quest.
   | CPU provider, 2 threads | 180 ms | 0.7 |
 
   More threads take cores from rendering. About 6x slower than the PC (30 ms).
+- Model sizes on Quest 3 (XNNPACK, 2 threads), with recognition from running the same models on PC over 209 recorded
+  headset-camera frames (frames with confidence >= 0.6):
+
+  | Model | Inference | Stale/s | cup | bottle | tv | mouse (small) | keyboard |
+  |---|---|---|---|---|---|---|---|
+  | YOLO11n 640 | 164 ms | 0.4 | 31 | 38 | 31 | 14 | 1 |
+  | YOLO11n 320 | 50 ms | 0.6 | 36 | 28 | 30 | 1 | 3 |
+  | YOLO11s 640 | 435 ms | 1.5 | 51 | 53 | 83 | 9 | 9 |
+  | YOLO11s 320 | 119 ms | 0.4 | 49 | 51 | 65 | 2 | 7 |
+
+  320 px is 3-4x faster but loses small objects. YOLO11s 320 beats YOLO11n 640 on speed and on everything but small
+  objects. Idea for the selection step: detect only on a crop around where the player points, so small objects fill
+  the (small, fast) model input.
+- Speed tests on the headset: `Tools/Quest/RunQuestBenchmark.ps1` runs the installed app with several settings or
+  models in a row (headset on, about 1 minute per variant) and prints inference time and stale frames per variant.
+- Test models (`yolo11n_320.onnx`, `yolo11s_640.onnx`, `yolo11s_320.onnx`) are exported with
+  `YOLO("Models/<name>.pt").export(format="onnx", imgsz=<size>, simplify=True)` in `Tools/ObjectDetection`.
 - Detections from the headset camera: cup 0.94, bottle 0.92, monitor as `tv` 0.87, and the mouse lying on the desk
   as `mouse` 0.86 (it wasn't recognised held in the air). Dim, backlit objects are missed.
 

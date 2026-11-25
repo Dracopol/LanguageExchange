@@ -26,11 +26,13 @@ def parse_arguments() -> argparse.Namespace:
 	parser.add_argument("--models", nargs="+", default=["yolo11n", "yolo11s", "yolo11m"])
 	parser.add_argument("--confidence", type=float, default=0.25, help="Lowest confidence to keep.")
 	parser.add_argument("--ignore", nargs="*", default=["person"], help="Class names to skip.")
+	parser.add_argument("--size", type=int, default=MODEL_INPUT_SIZE_PIXELS,
+		help="Model input size in pixels (e.g. 320 for a faster, less accurate model).")
 	return parser.parse_args()
 
 
 def run_model(model_name: str, frame_paths: list[Path], confidence: float, ignored_names: set[str],
-		output_file: Path) -> None:
+		output_file: Path, size_pixels: int) -> None:
 	model = YOLO(str(MODEL_DIRECTORY / f"{model_name}.pt"))
 	kept_classes = [index for index, name in model.names.items() if name not in ignored_names]
 
@@ -39,7 +41,7 @@ def run_model(model_name: str, frame_paths: list[Path], confidence: float, ignor
 	start_seconds = time.perf_counter()
 	with open(output_file, "w", encoding="utf-8") as file:
 		for frame_path in frame_paths:
-			result = model.predict(str(frame_path), imgsz=MODEL_INPUT_SIZE_PIXELS, conf=confidence,
+			result = model.predict(str(frame_path), imgsz=size_pixels, conf=confidence,
 				classes=kept_classes, verbose=False)[0]
 			inference_milliseconds.append(result.speed["inference"])
 			detections = [
@@ -63,8 +65,9 @@ def main() -> None:
 	if not frame_paths:
 		raise SystemExit(f"No Frame*.png in {arguments.recording}")
 	for model_name in arguments.models:
+		folder_name = model_name if arguments.size == MODEL_INPUT_SIZE_PIXELS else f"{model_name}_{arguments.size}"
 		run_model(model_name, frame_paths, arguments.confidence, set(arguments.ignore),
-			arguments.recording / "Models" / model_name / "Detections.jsonl")
+			arguments.recording / "Models" / folder_name / "Detections.jsonl", arguments.size)
 
 
 if __name__ == "__main__":
