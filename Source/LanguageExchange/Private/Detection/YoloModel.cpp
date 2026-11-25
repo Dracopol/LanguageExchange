@@ -3,10 +3,6 @@
 #include "Detection/CocoClassNames.h"
 #include "HAL/PlatformTime.h"
 #include "LanguageExchange.h"
-#include "NNE.h"
-#include "NNEModelData.h"
-#include "NNERuntimeCPU.h"
-#include "NNETypes.h"
 
 namespace LanguageExchange::Detection
 {
@@ -31,113 +27,47 @@ namespace LanguageExchange::Detection
 			return static_cast<float>(IntersectionArea / UnionArea);
 		}
 
-		FString DescribeShape(const UE::NNE::FSymbolicTensorShape& Shape)
+		FString DescribeShape(const TConstArrayView<int64> Shape)
 		{
 			TArray<FString> Dimensions;
-			for (const int32 Dimension : Shape.GetData())
+			for (const int64 Dimension : Shape)
 			{
-				Dimensions.Add(FString::FromInt(Dimension));
+				Dimensions.Add(LexToString(Dimension));
 			}
 			return FString::Join(Dimensions, TEXT(" x "));
 		}
 	}
 
-	TSharedPtr<FYoloModel> FYoloModel::Create(UNNEModelData* ModelData, const FString& RuntimeName)
+	TSharedPtr<FYoloModel> FYoloModel::Create(TUniquePtr<IModelRunner> Runner)
 	{
-		check(IsValid(ModelData));
+		check(Runner.IsValid());
 
-		const TWeakInterfacePtr<INNERuntimeCPU> Runtime = UE::NNE::GetRuntime<INNERuntimeCPU>(RuntimeName);
-		if (!Runtime.IsValid())
-		{
-			const FString AvailableRuntimeNames =
-				FString::Join(UE::NNE::GetAllRuntimeNames<INNERuntimeCPU>(), TEXT(", "));
-			UE_LOG(LogLanguageExchange, Error, TEXT("NNE runtime '%s' not found. Available CPU runtimes: %s"),
-				*RuntimeName, *AvailableRuntimeNames);
-			return nullptr;
-		}
-
-		if (Runtime->CanCreateModelCPU(ModelData) != INNERuntimeCPU::ECanCreateModelCPUStatus::Ok)
-		{
-			UE_LOG(LogLanguageExchange, Error, TEXT("NNE runtime '%s' can't create a model from %s"),
-				*RuntimeName, *ModelData->GetPathName());
-			return nullptr;
-		}
-
-		const TSharedPtr<UE::NNE::IModelCPU> Model = Runtime->CreateModelCPU(ModelData);
-		if (!Model.IsValid())
-		{
-			UE_LOG(LogLanguageExchange, Error, TEXT("Creating the model %s failed"), *ModelData->GetPathName());
-			return nullptr;
-		}
-
-		const TSharedPtr<UE::NNE::IModelInstanceCPU> ModelInstance = Model->CreateModelInstanceCPU();
-		if (!ModelInstance.IsValid())
-		{
-			UE_LOG(LogLanguageExchange, Error, TEXT("Creating a model instance of %s failed"),
-				*ModelData->GetPathName());
-			return nullptr;
-		}
-
-		const TConstArrayView<UE::NNE::FTensorDesc> InputDescriptions = ModelInstance->GetInputTensorDescs();
-		const TConstArrayView<UE::NNE::FTensorDesc> OutputDescriptions = ModelInstance->GetOutputTensorDescs();
-		if (InputDescriptions.Num() != 1 || OutputDescriptions.Num() != 1)
-		{
-			UE_LOG(LogLanguageExchange, Error, TEXT("Expected a model with 1 input and 1 output, got %d and %d"),
-				InputDescriptions.Num(), OutputDescriptions.Num());
-			return nullptr;
-		}
-
-		const UE::NNE::FSymbolicTensorShape& SymbolicInputShape = InputDescriptions[0].GetShape();
-		const TConstArrayView<int32> InputDimensions = SymbolicInputShape.GetData();
-		const bool bIsInputSupported = SymbolicInputShape.IsConcrete()
-			&& InputDimensions.Num() == 4
-			&& InputDimensions[0] == 1
-			&& InputDimensions[1] == 3
-			&& InputDimensions[2] == InputDimensions[3]
-			&& InputDescriptions[0].GetDataType() == ENNETensorDataType::Float;
+		const TConstArrayView<int64> InputShape = Runner->GetInputShape();
+		const bool bIsInputSupported = InputShape.Num() == 4
+			&& InputShape[0] == 1
+			&& InputShape[1] == 3
+			&& InputShape[2] == InputShape[3];
 		if (!bIsInputSupported)
 		{
-			UE_LOG(LogLanguageExchange, Error, TEXT("Expected a float input of 1 x 3 x size x size, got %s"),
-				*DescribeShape(SymbolicInputShape));
+			UE_LOG(LogLanguageExchange, Error, TEXT("Expected an input of 1 x 3 x size x size, got %s"),
+				*DescribeShape(InputShape));
 			return nullptr;
 		}
 
-		const UE::NNE::FTensorShape InputShape = UE::NNE::FTensorShape::MakeFromSymbolic(SymbolicInputShape);
-		if (ModelInstance->SetInputTensorShapes(MakeArrayView(&InputShape, 1)) != UE::NNE::EResultStatus::Ok)
-		{
-			UE_LOG(LogLanguageExchange, Error, TEXT("Setting the input shape %s failed"),
-				*DescribeShape(SymbolicInputShape));
-			return nullptr;
-		}
-
-		// The output shape is either resolved by SetInputTensorShapes or fixed in the model
-		UE::NNE::FTensorShape OutputShape;
-		const TConstArrayView<UE::NNE::FTensorShape> ResolvedOutputShapes = ModelInstance->GetOutputTensorShapes();
-		if (ResolvedOutputShapes.Num() == 1)
-		{
-			OutputShape = ResolvedOutputShapes[0];
-		}
-		else if (OutputDescriptions[0].GetShape().IsConcrete())
-		{
-			OutputShape = UE::NNE::FTensorShape::MakeFromSymbolic(OutputDescriptions[0].GetShape());
-		}
-
-		const TConstArrayView<uint32> OutputDimensions = OutputShape.GetData();
-		const bool bIsOutputSupported = OutputDimensions.Num() == 3
-			&& OutputDimensions[0] == 1
-			&& OutputDimensions[1] > BoxValueCount
-			&& OutputDescriptions[0].GetDataType() == ENNETensorDataType::Float;
+		const TConstArrayView<int64> OutputShape = Runner->GetOutputShape();
+		const bool bIsOutputSupported = OutputShape.Num() == 3
+			&& OutputShape[0] == 1
+			&& OutputShape[1] > BoxValueCount;
 		if (!bIsOutputSupported)
 		{
-			UE_LOG(LogLanguageExchange, Error,
-				TEXT("Expected a float output of 1 x (4 + classes) x anchors, got %s"),
-				*DescribeShape(OutputDescriptions[0].GetShape()));
+			UE_LOG(LogLanguageExchange, Error, TEXT("Expected an output of 1 x (4 + classes) x anchors, got %s"),
+				*DescribeShape(OutputShape));
 			return nullptr;
 		}
 
-		const int32 InputSizePixels = InputDimensions[2];
-		const int32 ClassCount = static_cast<int32>(OutputDimensions[1]) - BoxValueCount;
-		const int32 AnchorCount = static_cast<int32>(OutputDimensions[2]);
+		const int32 InputSizePixels = static_cast<int32>(InputShape[2]);
+		const int32 ClassCount = static_cast<int32>(OutputShape[1]) - BoxValueCount;
+		const int32 AnchorCount = static_cast<int32>(OutputShape[2]);
 		if (ClassCount != CocoClassCount)
 		{
 			UE_LOG(LogLanguageExchange, Warning,
@@ -145,18 +75,15 @@ namespace LanguageExchange::Detection
 				ClassCount, CocoClassCount);
 		}
 
-		UE_LOG(LogLanguageExchange, Log,
-			TEXT("Detection model %s ready on %s: input %d x %d px, %d classes, %d anchors"),
-			*ModelData->GetName(), *RuntimeName, InputSizePixels, InputSizePixels, ClassCount, AnchorCount);
+		UE_LOG(LogLanguageExchange, Log, TEXT("Detection model ready on %s: input %d x %d px, %d classes, %d anchors"),
+			*Runner->GetDescription(), InputSizePixels, InputSizePixels, ClassCount, AnchorCount);
 
-		return MakeShared<FYoloModel>(Model, ModelInstance, InputSizePixels, ClassCount, AnchorCount);
+		return MakeShared<FYoloModel>(MoveTemp(Runner), InputSizePixels, ClassCount, AnchorCount);
 	}
 
-	FYoloModel::FYoloModel(const TSharedPtr<UE::NNE::IModelCPU>& InModel,
-		const TSharedPtr<UE::NNE::IModelInstanceCPU>& InModelInstance, const int32 InInputSizePixels,
-		const int32 InClassCount, const int32 InAnchorCount)
-		: Model(InModel)
-		, ModelInstance(InModelInstance)
+	FYoloModel::FYoloModel(TUniquePtr<IModelRunner> InRunner, const int32 InInputSizePixels, const int32 InClassCount,
+		const int32 InAnchorCount)
+		: Runner(MoveTemp(InRunner))
 		, InputSizePixels(InInputSizePixels)
 		, ClassCount(InClassCount)
 		, AnchorCount(InAnchorCount)
@@ -183,20 +110,15 @@ namespace LanguageExchange::Detection
 	{
 		FillInputTensor(Pixels);
 
-		const UE::NNE::FTensorBindingCPU InputBinding{ InputTensor.GetData(), InputTensor.Num() * sizeof(float) };
-		const UE::NNE::FTensorBindingCPU OutputBinding{ OutputTensor.GetData(), OutputTensor.Num() * sizeof(float) };
-
 		const double StartSeconds = FPlatformTime::Seconds();
-		const UE::NNE::EResultStatus Status =
-			ModelInstance->RunSync(MakeArrayView(&InputBinding, 1), MakeArrayView(&OutputBinding, 1));
+		const bool bHasRun = Runner->Run(InputTensor, OutputTensor);
 		OutInferenceMilliseconds = static_cast<float>((FPlatformTime::Seconds() - StartSeconds) * 1000.0);
 
-		if (Status != UE::NNE::EResultStatus::Ok)
+		if (!bHasRun)
 		{
 			UE_LOG(LogLanguageExchange, Error, TEXT("Running the detection model failed"));
 			return {};
 		}
-
 		TArray<FLanguageExchangeDetection> Candidates = DecodeOutputTensor(MinimumConfidence);
 		Candidates.Sort([](const FLanguageExchangeDetection& First, const FLanguageExchangeDetection& Second)
 		{

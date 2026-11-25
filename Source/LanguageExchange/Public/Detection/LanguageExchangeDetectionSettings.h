@@ -18,6 +18,9 @@ public:
 
 	const TSoftObjectPtr<UNNEModelData>& GetModel() const { return Model; }
 	const FString& GetRuntimeName() const { return RuntimeName; }
+	const FString& GetOnnxModelFile() const { return OnnxModelFile; }
+	int32 GetOnnxRuntimeThreadCount() const { return OnnxRuntimeThreadCount; }
+	bool ShouldUseXnnpack() const { return bUseXnnpack; }
 	int32 GetCameraIndex() const { return CameraIndex; }
 	FIntPoint GetHeadsetCameraResolutionPixels() const { return HeadsetCameraResolutionPixels; }
 	int32 GetHeadsetCameraMaxFramesPerSecond() const { return HeadsetCameraMaxFramesPerSecond; }
@@ -34,10 +37,25 @@ private:
 	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection")
 	TSoftObjectPtr<UNNEModelData> Model;
 
-	// NNE CPU runtime that runs the model. NNERuntimeORTCpu (ONNX Runtime) is desktop only;
-	// NNERuntimeIREECpu also runs on Android
+	// NNE CPU runtime that runs the model on PC (NNE has no CPU runtime for Android)
 	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection")
 	FString RuntimeName = TEXT("NNERuntimeORTCpu");
+
+	// On Android: the same model as an ONNX file, relative to Content/, run with ONNX Runtime for Android.
+	// Packaged through "Additional Non-Asset Directories to Package" (DefaultGame.ini).
+	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection|Android")
+	FString OnnxModelFile = TEXT("LanguageExchange/Detection/Onnx/yolo11n.onnx");
+
+	// On Android: CPU threads for ONNX Runtime. Measured on Quest 3 (YOLO11n, 640 px): 4 threads are hardly faster
+	// than 2 but take cores from rendering (3-5 stale frames per second instead of none)
+	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection|Android",
+		meta = (ClampMin = "1", ClampMax = "8"))
+	int32 OnnxRuntimeThreadCount = 2;
+
+	// On Android: run the model with ONNX Runtime's XNNPACK provider (optimised for ARM) instead of its default CPU
+	// one; about 10% faster on Quest 3
+	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection|Android")
+	bool bUseXnnpack = true;
 
 	// Webcam (used when no headset is active): index into the list of video capture devices (the log lists them)
 	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection", meta = (ClampMin = "0"))

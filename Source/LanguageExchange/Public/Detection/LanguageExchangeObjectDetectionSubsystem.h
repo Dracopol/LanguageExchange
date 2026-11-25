@@ -61,6 +61,9 @@ private:
 	// Functions
 	void OpenCamera();
 	void LoadModelAsync();
+	void LoadNneModelAsync();
+	void LoadOnnxModelAsync();
+	void FinishModelLoad(const TSharedPtr<LanguageExchange::Detection::FYoloModel>& LoadedModel);
 	void StartFrameCapture();
 	void QueueReadbackPoll();
 	void StartInference();
@@ -77,6 +80,8 @@ private:
 
 	TSharedPtr<FStreamableHandle> ModelLoadHandle;
 	TSharedPtr<LanguageExchange::Detection::FYoloModel> Model;
+	// The model while it's being created on a worker thread (ONNX Runtime on Android); polled by the detection timer
+	TFuture<TSharedPtr<LanguageExchange::Detection::FYoloModel>> PendingModel;
 	TSharedPtr<LanguageExchange::Detection::FDetectionJob> CurrentJob;
 	TFuture<void> InferenceFuture;
 	FTimerHandle DetectionTimerHandle;
@@ -92,6 +97,11 @@ private:
 	int32 InferenceCount = 0;
 	double InferenceMillisecondsTotal = 0.0;
 	float FirstInferenceMilliseconds = 0.0f;
+
+	// For the statistics logged every few runs while the app runs
+	int32 RecentInferenceCount = 0;
+	double RecentInferenceMillisecondsTotal = 0.0;
+	float RecentInferenceMaximumMilliseconds = 0.0f;
 
 	// Recording (console: LanguageExchange.Detection.Record 1); the folder is created on the first recorded frame
 	FString RecordingDirectory;

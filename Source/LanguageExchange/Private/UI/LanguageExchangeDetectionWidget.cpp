@@ -81,7 +81,7 @@ int32 ULanguageExchangeDetectionWidget::NativePaint(const FPaintArgs& Args, cons
 
 		// Name above the box, or inside it when the box touches the top
 		const FText Label = FText::Format(LOCTEXT("DetectionLabel", "{0} {1}"),
-			FText::FromName(Detection.ClassName), FText::AsNumber(Detection.Confidence, &ConfidenceFormat));
+			FText::FromString(Detection.ClassName), FText::AsNumber(Detection.Confidence, &ConfidenceFormat));
 		const double LabelHeight = MeasureLabel(Label).Y;
 		const FVector2D LabelTopLeft(Bounds.Min.X, FMath::Max(Bounds.Min.Y - LabelHeight, ImageRect.Min.Y));
 		PaintLabel(OutDrawElements, AllottedGeometry, LabelLayerId, Label, LabelTopLeft, BoxColor);

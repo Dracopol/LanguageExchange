@@ -24,13 +24,13 @@ namespace LanguageExchange::Detection
 		};
 	}
 
-	FName GetCocoClassName(const int32 ClassIndex)
+	FString GetCocoClassName(const int32 ClassIndex)
 	{
 		if (ClassIndex < 0 || ClassIndex >= CocoClassCount)
 		{
-			return FName(*FString::Printf(TEXT("class %d"), ClassIndex));
+			return FString::Printf(TEXT("class %d"), ClassIndex);
 		}
-		return FName(CocoClassNames[ClassIndex]);
+		return CocoClassNames[ClassIndex];
 	}
 
 	int32 FindCocoClassIndex(const FName ClassName)

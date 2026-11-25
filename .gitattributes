@@ -32,3 +32,6 @@
 *.onnx filter=lfs diff=lfs merge=lfs -text
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.tflite filter=lfs diff=lfs merge=lfs -text
+
+# Third-party native libraries (e.g. ONNX Runtime for Android)
+*.so filter=lfs diff=lfs merge=lfs -text

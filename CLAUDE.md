@@ -136,6 +136,35 @@ performance on Quest.
   (`undefined symbol: LowLevelTasks::FTask::ActiveTask` from `UE::Tasks::Launch`). Use
   `Async(EAsyncExecution::ThreadPool, ...)` for background work instead.
 
+### Step 3: model on the Quest (option A: ONNX Runtime for Android)
+
+- NNE has no Android CPU runtime, so on Android `FYoloModel` runs through `FOnnxRuntimeModelRunner` (ONNX Runtime
+  1.32.0's C API; library and headers in `Source/ThirdParty/LanguageExchangeOnnxRuntimeAndroid`, see its README).
+  On PC it still uses `FNneModelRunner`. Both implement `IModelRunner`; pre-processing and decoding stay in
+  `FYoloModel`. The Android model is the plain file `Content/LanguageExchange/Detection/Onnx/yolo11n.onnx`, packaged
+  through `DirectoriesToAlwaysStageAsUFS` (cooked NNE assets don't keep the ONNX bytes).
+- Camera: `ULanguageExchangeCameraSource` with `ULanguageExchangeHeadsetCameraSource` (MRUK passthrough camera,
+  640 x 480, asks for `horizonos.permission.HEADSET_CAMERA`) when a headset is active, else
+  `ULanguageExchangeWebcamSource`. The headset camera images are correct (checked with a recording).
+- Testing on the headset without rebuilding: push a `UECommandLine.txt` (replaces the whole command line, so start
+  with `-project="../../../LanguageExchange/LanguageExchange.uproject"`) to
+  `/sdcard/Android/data/com.razvan.languageexchange/files/UnrealGame/LanguageExchange/`, e.g. with
+  `-ini:Game:[/Script/LanguageExchange.LanguageExchangeDetectionSettings]:bUseXnnpack=True` or
+  `-DPCVars=LanguageExchange.Detection.Record=1`. (`adb shell setprop debug.ue.commandline` also works but is
+  limited to 92 characters.) Recordings are under `.../LanguageExchange/Saved/Detection/Recordings/` on the headset.
+- Measured on Quest 3, YOLO11n at 640 px, detection every 0.25 s, 72 Hz:
+
+  | ONNX Runtime | Inference | Stale frames/s |
+  |---|---|---|
+  | CPU provider, 4 threads | 176 ms | 4.7 |
+  | XNNPACK, 4 threads | 160 ms | 3.2 |
+  | **XNNPACK, 2 threads (default)** | **165 ms** | **0.1** |
+  | CPU provider, 2 threads | 180 ms | 0.7 |
+
+  More threads take cores from rendering. About 6x slower than the PC (30 ms).
+- Detections from the headset camera: cup 0.94, bottle 0.92, monitor as `tv` 0.87, and the mouse lying on the desk
+  as `mouse` 0.86 (it wasn't recognised held in the air). Dim, backlit objects are missed.
+
 ### Step 3 results so far
 
 - Passthrough app runs on the Quest 3: steady 72 FPS, about 2.3 ms GPU per frame for the (empty) app. Fast head

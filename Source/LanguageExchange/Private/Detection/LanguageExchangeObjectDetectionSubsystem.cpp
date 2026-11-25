@@ -6,6 +6,8 @@
 #include "Detection/CocoClassNames.h"
 #include "Detection/DetectionJob.h"
 #include "Detection/LanguageExchangeDetectionSettings.h"
+#include "Detection/NneModelRunner.h"
+#include "Detection/OnnxRuntimeModelRunner.h"
 #include "Detection/YoloModel.h"
 #include "Engine/AssetManager.h"
 #include "Engine/Canvas.h"
@@ -31,6 +33,7 @@
 #define LOCTEXT_NAMESPACE "LanguageExchangeObjectDetection"
 
 using LanguageExchange::Detection::FDetectionJob;
+using LanguageExchange::Detection::FNneModelRunner;
 using LanguageExchange::Detection::FYoloModel;
 
 namespace LanguageExchange::Detection
@@ -39,6 +42,9 @@ namespace LanguageExchange::Detection
 	{
 		// Ultralytics pads letterboxed images with this grey, so the model is used to it
 		const FColor LetterboxColor(114, 114, 114);
+
+		// The inference time is logged every this many runs, so it can be read while the app runs (e.g. on the headset)
+		constexpr int32 InferenceStatisticsRunCount = 20;
 
 		TAutoConsoleVariable<bool> RecordVariable(
 			TEXT("LanguageExchange.Detection.Record"),
@@ -90,6 +96,31 @@ namespace LanguageExchange::Detection
 			}
 		}
 
+		// Worker thread: reads the ONNX file and creates the model with ONNX Runtime (Android only)
+		TSharedPtr<FYoloModel> CreateOnnxRuntimeModel(const FString& ModelPath, const int32 ThreadCount,
+			const bool bUseXnnpack)
+		{
+#if WITH_LANGUAGEEXCHANGE_ONNXRUNTIME
+			TArray<uint8> ModelBytes;
+			if (!FFileHelper::LoadFileToArray(ModelBytes, *ModelPath))
+			{
+				UE_LOG(LogLanguageExchange, Error, TEXT("Reading the model file %s failed"), *ModelPath);
+				return nullptr;
+			}
+
+			TUniquePtr<FOnnxRuntimeModelRunner> Runner =
+				FOnnxRuntimeModelRunner::Create(ModelBytes, ThreadCount, bUseXnnpack);
+			if (!Runner.IsValid())
+			{
+				return nullptr;
+			}
+			return FYoloModel::Create(MoveTemp(Runner));
+#else
+			UE_LOG(LogLanguageExchange, Error, TEXT("ONNX Runtime isn't available on this platform"));
+			return nullptr;
+#endif
+		}
+
 		// One JSON line per frame; bounds are normalised to the model input image
 		FString DescribeFrameAsJson(const FString& FrameFileName, const FDetectionJob& Job)
 		{
@@ -99,7 +130,7 @@ namespace LanguageExchange::Detection
 				const FBox2D& Bounds = Detection.NormalizedBounds;
 				DetectionEntries.Add(FString::Printf(
 					TEXT("{\"class\":\"%s\",\"confidence\":%.3f,\"box\":[%.4f,%.4f,%.4f,%.4f]}"),
-					*Detection.ClassName.ToString(), Detection.Confidence,
+					*Detection.ClassName, Detection.Confidence,
 					Bounds.Min.X, Bounds.Min.Y, Bounds.Max.X, Bounds.Max.Y));
 			}
 			return FString::Printf(TEXT("{\"frame\":\"%s\",\"inferenceMilliseconds\":%.1f,\"detections\":[%s]}\n"),
@@ -137,6 +168,12 @@ void ULanguageExchangeObjectDetectionSubsystem::Deinitialize()
 	{
 		InferenceFuture.Wait();
 		bIsInferenceRunning = false;
+	}
+
+	if (PendingModel.IsValid())
+	{
+		PendingModel.Wait();
+		PendingModel.Reset();
 	}
 
 	if (CurrentJob.IsValid())
@@ -253,13 +290,25 @@ void ULanguageExchangeObjectDetectionSubsystem::HandleModelLoad()
 		return;
 	}
 
-	Model = FYoloModel::Create(ModelData, Settings->GetRuntimeName());
-	if (!Model.IsValid())
+	TUniquePtr<FNneModelRunner> Runner = FNneModelRunner::Create(ModelData, Settings->GetRuntimeName());
+	if (!Runner.IsValid())
+	{
+		FinishModelLoad(nullptr);
+		return;
+	}
+	FinishModelLoad(FYoloModel::Create(MoveTemp(Runner)));
+}
+
+void ULanguageExchangeObjectDetectionSubsystem::FinishModelLoad(const TSharedPtr<FYoloModel>& LoadedModel)
+{
+	if (!LoadedModel.IsValid())
 	{
 		ErrorText = LOCTEXT("ModelCreateFail", "The detection model couldn't be started (see the log)");
 		return;
 	}
+	Model = LoadedModel;
 
+	const ULanguageExchangeDetectionSettings* const Settings = GetDefault<ULanguageExchangeDetectionSettings>();
 	TArray<int32> IgnoredClassIndices;
 	for (const FName ClassName : Settings->GetIgnoredClassNames())
 	{
@@ -289,6 +338,12 @@ void ULanguageExchangeObjectDetectionSubsystem::HandleModelLoad()
 
 void ULanguageExchangeObjectDetectionSubsystem::HandleDetectionTimer()
 {
+	if (PendingModel.IsValid() && PendingModel.IsReady())
+	{
+		FinishModelLoad(PendingModel.Get());
+		PendingModel.Reset();
+	}
+
 	// Skip this round if the previous frame is still on its way
 	if (!IsValid(CameraSource) || !CameraSource->IsOpen() || !Model.IsValid() || CurrentJob.IsValid())
 	{
@@ -315,6 +370,16 @@ void ULanguageExchangeObjectDetectionSubsystem::OpenCamera()
 
 void ULanguageExchangeObjectDetectionSubsystem::LoadModelAsync()
 {
+	// NNE has no CPU runtime for Android, so there the model runs on ONNX Runtime for Android
+#if WITH_LANGUAGEEXCHANGE_ONNXRUNTIME
+	LoadOnnxModelAsync();
+#else
+	LoadNneModelAsync();
+#endif
+}
+
+void ULanguageExchangeObjectDetectionSubsystem::LoadNneModelAsync()
+{
 	const TSoftObjectPtr<UNNEModelData>& ModelReference = GetDefault<ULanguageExchangeDetectionSettings>()->GetModel();
 	if (ModelReference.IsNull())
 	{
@@ -326,6 +391,21 @@ void ULanguageExchangeObjectDetectionSubsystem::LoadModelAsync()
 
 	ModelLoadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(ModelReference.ToSoftObjectPath(),
 		FStreamableDelegate::CreateUObject(this, &ThisClass::HandleModelLoad));
+}
+
+void ULanguageExchangeObjectDetectionSubsystem::LoadOnnxModelAsync()
+{
+	const ULanguageExchangeDetectionSettings* const Settings = GetDefault<ULanguageExchangeDetectionSettings>();
+	const FString ModelPath = FPaths::ProjectContentDir() / Settings->GetOnnxModelFile();
+	const int32 ThreadCount = Settings->GetOnnxRuntimeThreadCount();
+	const bool bUseXnnpack = Settings->ShouldUseXnnpack();
+	UE_LOG(LogLanguageExchange, Log, TEXT("Loading %s with ONNX Runtime"), *ModelPath);
+
+	// Reading 10 MB and building the session takes a moment, so it happens on a worker thread
+	PendingModel = Async(EAsyncExecution::ThreadPool, [ModelPath, ThreadCount, bUseXnnpack]()
+	{
+		return LanguageExchange::Detection::CreateOnnxRuntimeModel(ModelPath, ThreadCount, bUseXnnpack);
+	});
 }
 
 void ULanguageExchangeObjectDetectionSubsystem::StartFrameCapture()
@@ -449,6 +529,19 @@ void ULanguageExchangeObjectDetectionSubsystem::FinishInference()
 		InferenceMillisecondsTotal += InferenceMilliseconds;
 	}
 
+	++RecentInferenceCount;
+	RecentInferenceMillisecondsTotal += InferenceMilliseconds;
+	RecentInferenceMaximumMilliseconds = FMath::Max(RecentInferenceMaximumMilliseconds, InferenceMilliseconds);
+	if (RecentInferenceCount == LanguageExchange::Detection::InferenceStatisticsRunCount)
+	{
+		UE_LOG(LogLanguageExchange, Log, TEXT("Inference over the last %d runs: average %.1f ms, maximum %.1f ms"),
+			RecentInferenceCount, RecentInferenceMillisecondsTotal / RecentInferenceCount,
+			RecentInferenceMaximumMilliseconds);
+		RecentInferenceCount = 0;
+		RecentInferenceMillisecondsTotal = 0.0;
+		RecentInferenceMaximumMilliseconds = 0.0f;
+	}
+
 	if (Job->bIsRecorded)
 	{
 		RecordFrame(Job.ToSharedRef());
@@ -501,7 +594,7 @@ void ULanguageExchangeObjectDetectionSubsystem::LogDetectionsIfChanged()
 	TArray<FString> ClassNames;
 	for (const FLanguageExchangeDetection& Detection : Detections)
 	{
-		ClassNames.AddUnique(Detection.ClassName.ToString());
+		ClassNames.AddUnique(Detection.ClassName);
 	}
 	ClassNames.Sort();
 	const FString JoinedClassNames = FString::Join(ClassNames, TEXT(", "));
@@ -514,7 +607,7 @@ void ULanguageExchangeObjectDetectionSubsystem::LogDetectionsIfChanged()
 	TArray<FString> Descriptions;
 	for (const FLanguageExchangeDetection& Detection : Detections)
 	{
-		Descriptions.Add(FString::Printf(TEXT("%s %.2f"), *Detection.ClassName.ToString(), Detection.Confidence));
+		Descriptions.Add(FString::Printf(TEXT("%s %.2f"), *Detection.ClassName, Detection.Confidence));
 	}
 	UE_LOG(LogLanguageExchange, Log, TEXT("Detected: %s (inference %.1f ms)"),
 		Descriptions.IsEmpty() ? TEXT("nothing") : *FString::Join(Descriptions, TEXT(", ")), InferenceMilliseconds);

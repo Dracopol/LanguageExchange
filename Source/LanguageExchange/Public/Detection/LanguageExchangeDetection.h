@@ -9,9 +9,10 @@ struct FLanguageExchangeDetection
 {
 	GENERATED_BODY()
 
-	// Class name as the model knows it (COCO for YOLO11n), e.g. "cup"
+	// Class name as the model knows it (COCO for YOLO11n), e.g. "cup". A string rather than an FName: FNames keep the
+	// spelling the engine registered first, so "mouse" would show as the input key's "Mouse".
 	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
-	FName ClassName;
+	FString ClassName;
 
 	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
 	int32 ClassIndex = INDEX_NONE;

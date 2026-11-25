@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Packages ONNX Runtime's library into the APK next to libUnreal.so and loads it before the game starts -->
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+	<resourceCopies>
+		<copyFile src="$S(PluginDir)/Lib/arm64-v8a/libonnxruntime.so" dst="$S(BuildDir)/libs/arm64-v8a/libonnxruntime.so" />
+	</resourceCopies>
+
+	<soLoadLibrary>
+		<loadLibrary name="onnxruntime" failmsg="libonnxruntime.so not loaded; object detection won't run" />
+	</soLoadLibrary>
+</root>

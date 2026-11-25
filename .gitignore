@@ -12,6 +12,8 @@ Build/*/**
 # Android project inputs (Horizon OS manifest additions, icons), created by Project Settings > Android > Configure Now
 !Build/Android/
 !Build/Android/**
+# ...but not the Java files Unreal generates there on every Android build
+Build/Android/src/
 
 # Plugin build output
 Plugins/**/Binaries/

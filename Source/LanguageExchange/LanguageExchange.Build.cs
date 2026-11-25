@@ -22,6 +22,8 @@ public class LanguageExchange : ModuleRules
 			"AndroidPermission",
 			"HeadMountedDisplay",
 			"ImageCore",
+			// ONNX Runtime for Android (Source/ThirdParty); only adds anything on Android
+			"LanguageExchangeOnnxRuntimeAndroid",
 			"MediaAssets",
 			"MRUtilityKit",
 			"NNE",
