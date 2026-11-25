@@ -17,6 +17,8 @@ namespace LanguageExchange::Detection
 	struct FDetectionJob;
 }
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnDetectionsChange, TConstArrayView<FLanguageExchangeDetection> /* Detections */);
+
 // Runs object detection on the camera image a few times per second in game and PIE worlds.
 // The camera is the headset's passthrough camera when a headset is active (on the Quest, or over Link), otherwise a
 // webcam; the model runs on an NNE CPU runtime. Settings: Project Settings > LanguageExchange > Object Detection.
@@ -26,6 +28,11 @@ class ULanguageExchangeObjectDetectionSubsystem : public UTickableWorldSubsystem
 	GENERATED_BODY()
 
 public:
+	// Events
+
+	// After every detection run (a few times per second), also when nothing was found
+	FOnDetectionsChange OnDetectionsChange;
+
 	// Setup
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;

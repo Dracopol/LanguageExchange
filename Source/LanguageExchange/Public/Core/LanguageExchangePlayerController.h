@@ -4,6 +4,7 @@
 #include "GameFramework/PlayerController.h"
 #include "LanguageExchangePlayerController.generated.h"
 
+class ALanguageExchangeDetectionLabels;
 class ULanguageExchangeDetectionWidget;
 
 UCLASS()
@@ -25,7 +26,14 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|UI")
 	TSubclassOf<ULanguageExchangeDetectionWidget> DetectionWidgetClass;
 
+	// Spawned when a headset is active
+	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|UI")
+	TSubclassOf<ALanguageExchangeDetectionLabels> DetectionLabelsClass;
+
 	// State
 	UPROPERTY()
 	TObjectPtr<ULanguageExchangeDetectionWidget> DetectionWidget;
+
+	UPROPERTY()
+	TObjectPtr<ALanguageExchangeDetectionLabels> DetectionLabels;
 };

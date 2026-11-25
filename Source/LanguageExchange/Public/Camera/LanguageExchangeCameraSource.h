@@ -31,6 +31,17 @@ public:
 	virtual FIntPoint GetSizePixels() const
 		PURE_VIRTUAL(ULanguageExchangeCameraSource::GetSizePixels, return FIntPoint::ZeroValue;);
 
+	// The camera's pose in the world for the latest image. False if the camera has no known pose (e.g. a webcam).
+	virtual bool TryGetCameraPose(FTransform& OutCameraPose) const { return false; }
+
+	// The world-space ray through a point of the image (normalised 0..1, (0, 0) top left), seen from CameraPose
+	// (as returned by TryGetCameraPose when that image was captured). False if the camera can't tell.
+	virtual bool TryGetImageRay(const FVector2D& NormalizedImagePoint, const FTransform& CameraPose,
+		FVector& OutOrigin, FVector& OutDirection) const
+	{
+		return false;
+	}
+
 	bool IsOpen() const { return bIsOpen; }
 	const FText& GetErrorText() const { return ErrorText; }
 

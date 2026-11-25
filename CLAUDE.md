@@ -37,8 +37,15 @@ Planned pieces:
 2. Done: Unreal on PC, webcam: run the same model as ONNX through NNE and show the detected names.
 3. Done: Unreal on Quest: use the passthrough camera image and run the model on the headset; measure speed.
    Result: standalone works (device plan A). YOLO11s at 320 px on ONNX Runtime + XNNPACK (2 threads), ~120 ms.
-4. Next: make detections visible in VR (e.g. a label floating at the detected object, which needs the camera pose
-   and `ViewportPointToWorldSpaceRay`), then selection by pointing (and detecting on a crop around it).
+4. Current: make detections visible in VR, then selection by pointing (and detecting on a crop around it).
+   Done so far: labels in the room. The headset camera source stores the camera pose when a frame is captured
+   (`TryGetCameraPose`, the pose of the latest camera image) and turns a box centre into a world ray with that pose
+   (`TryGetImageRay`, MRUK's `ViewportPointToWorldSpaceRay` maths with a given pose, because detection finishes
+   ~0.1 s later). `ALanguageExchangeDetectionLabels` (spawned by the player controller when a headset is active)
+   listens to the subsystem's `OnDetectionsChange` and places a 3D text per detection 80 cm along its ray, facing
+   the camera. Tested on Quest 3: labels follow the objects, 72 FPS, no stale frames.
+   Next: smooth labels over time (they're replaced 4x per second and flicker), real depth instead of the fixed
+   80 cm (e.g. MRUK's room mesh or Meta's depth API), then pointing.
 
 Open for later: LiteRT (option B) as a comparison to ONNX Runtime; display rate 90/120 Hz; a world-space status
 display instead of the 2D overlay (not visible in VR).

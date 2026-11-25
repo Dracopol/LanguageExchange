@@ -21,6 +21,9 @@ public:
 	virtual void Close() override;
 	virtual UTexture* GetTexture() const override;
 	virtual FIntPoint GetSizePixels() const override;
+	virtual bool TryGetCameraPose(FTransform& OutCameraPose) const override;
+	virtual bool TryGetImageRay(const FVector2D& NormalizedImagePoint, const FTransform& CameraPose,
+		FVector& OutOrigin, FVector& OutDirection) const override;
 
 private:
 	// Event handlers

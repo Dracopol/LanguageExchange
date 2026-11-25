@@ -449,6 +449,8 @@ void ULanguageExchangeObjectDetectionSubsystem::StartFrameCapture()
 	Job->ContentOffset = ContentOffsetPixels / InputSize;
 	Job->ContentSize = ContentSizePixels / InputSize;
 	Job->bIsRedFirst = ModelInputTarget->GetFormat() == PF_R8G8B8A8;
+	// The pose of the image just drawn, so detections can be placed in the world later even if the head moves
+	Job->bHasCameraPose = CameraSource->TryGetCameraPose(Job->CameraPose);
 	Job->Readback = MakeShared<FRHIGPUTextureReadback>(TEXT("LanguageExchangeModelInput"));
 
 	FTextureRenderTargetResource* const TargetResource = ModelInputTarget->GameThread_GetRenderTargetResource();
@@ -560,10 +562,17 @@ void ULanguageExchangeObjectDetectionSubsystem::FinishInference()
 		FBox2D& Bounds = Detection.NormalizedBounds;
 		Bounds.Min = ((Bounds.Min - Job->ContentOffset) / Job->ContentSize).ClampAxes(0.0, 1.0);
 		Bounds.Max = ((Bounds.Max - Job->ContentOffset) / Job->ContentSize).ClampAxes(0.0, 1.0);
+
+		if (Job->bHasCameraPose && IsValid(CameraSource))
+		{
+			Detection.bHasWorldRay = CameraSource->TryGetImageRay(Bounds.GetCenter(), Job->CameraPose,
+				Detection.WorldRayOrigin, Detection.WorldRayDirection);
+		}
 		Detections.Add(Detection);
 	}
 
 	LogDetectionsIfChanged();
+	OnDetectionsChange.Broadcast(Detections);
 }
 
 void ULanguageExchangeObjectDetectionSubsystem::RecordFrame(const TSharedRef<FDetectionJob>& Job)

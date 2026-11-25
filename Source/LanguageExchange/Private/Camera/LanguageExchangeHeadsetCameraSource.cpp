@@ -72,6 +72,54 @@ FIntPoint ULanguageExchangeHeadsetCameraSource::GetSizePixels() const
 	return FIntPoint(CameraTexture->GetWidth(), CameraTexture->GetHeight());
 }
 
+bool ULanguageExchangeHeadsetCameraSource::TryGetCameraPose(FTransform& OutCameraPose) const
+{
+	if (!IsOpen() || !CameraAccess->IsCameraPlaying())
+	{
+		return false;
+	}
+
+	// MRUK returns the pose at the time the latest camera image was taken
+	FVector Position;
+	FQuat Orientation;
+	CameraAccess->GetCameraPose(Position, Orientation);
+	OutCameraPose = FTransform(Orientation, Position);
+	return true;
+}
+
+bool ULanguageExchangeHeadsetCameraSource::TryGetImageRay(const FVector2D& NormalizedImagePoint,
+	const FTransform& CameraPose, FVector& OutOrigin, FVector& OutDirection) const
+{
+	if (!IsOpen())
+	{
+		return false;
+	}
+
+	// Same as UMRUKPassthroughCameraAccessSubsystem::ViewportPointToWorldSpaceRay, but with a given pose instead of
+	// the latest one: detection finishes ~0.1 s after the image was taken, and the head moves meanwhile
+	const FMRUKCameraIntrinsics Intrinsics = CameraAccess->GetCameraIntrinsics();
+	if (Intrinsics.FocalLength.X == 0.0 || Intrinsics.FocalLength.Y == 0.0)
+	{
+		return false;
+	}
+
+	// The image is a centred crop of the sensor with the image's aspect ratio
+	const FVector2D SensorResolution(Intrinsics.SensorResolution.X, Intrinsics.SensorResolution.Y);
+	const FVector2D ImageResolution(CameraAccess->ResolutionWidth, CameraAccess->ResolutionHeight);
+	FVector2D CropScale = ImageResolution / SensorResolution;
+	CropScale /= FMath::Max(CropScale.X, CropScale.Y);
+	const FVector2D CropSize = SensorResolution * CropScale;
+	const FVector2D CropOffset = (SensorResolution - CropSize) * 0.5;
+	const FVector2D SensorPoint = CropOffset + CropSize * NormalizedImagePoint;
+
+	const FVector DirectionInCamera(1.0,
+		(SensorPoint.X - Intrinsics.PrincipalPoint.X) / Intrinsics.FocalLength.X,
+		(SensorPoint.Y - Intrinsics.PrincipalPoint.Y) / Intrinsics.FocalLength.Y);
+	OutOrigin = CameraPose.GetLocation();
+	OutDirection = CameraPose.GetRotation().RotateVector(DirectionInCamera.GetSafeNormal()).GetSafeNormal();
+	return true;
+}
+
 void ULanguageExchangeHeadsetCameraSource::HandlePermissionResult(const TArray<FString>& Permissions,
 	const TArray<bool>& GrantResults)
 {

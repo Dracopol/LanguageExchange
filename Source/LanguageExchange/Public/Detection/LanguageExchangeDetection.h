@@ -23,4 +23,15 @@ struct FLanguageExchangeDetection
 	// Box in image coordinates normalised to 0..1, (0, 0) is the top left corner
 	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
 	FBox2D NormalizedBounds = FBox2D(ForceInit);
+
+	// The world-space ray from the camera through the box centre, at the time the image was taken. Only set when the
+	// camera knows its pose (the headset camera); the object is somewhere along it.
+	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
+	bool bHasWorldRay = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
+	FVector WorldRayOrigin = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
+	FVector WorldRayDirection = FVector::ForwardVector;
 };

@@ -20,6 +20,9 @@ namespace LanguageExchange::Detection
 		FVector2D ContentSize = FVector2D::UnitVector;
 		// The render target is RGBA rather than BGRA (FColor's order)
 		bool bIsRedFirst = false;
+		// The camera's pose when the image was taken, if the camera knows it (headset camera)
+		bool bHasCameraPose = false;
+		FTransform CameraPose;
 		TSharedPtr<FRHIGPUTextureReadback> Readback;
 
 		// Set by the render thread when the readback is ready (Pixels stays empty if the readback failed)
