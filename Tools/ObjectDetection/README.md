@@ -28,5 +28,19 @@ best confidence. The classes we test with are highlighted in green:
 
 `Models/` is git-ignored because the weights can be downloaded again.
 
+## Review a recording from Unreal
+
+In the game, the console command `LanguageExchange.Detection.Record 1` saves each image the model sees and what it
+found to `Saved/Detection/Recordings/<date-time>/`.
+
+```powershell
+.venv\Scripts\python review_recording.py <recording folder>     # per-class summary + contact sheets
+.venv\Scripts\python compare_models.py <recording folder>       # run yolo11n/s/m on the same frames
+.venv\Scripts\python review_recording.py <recording folder> --detections <recording folder>\Models\yolo11s\Detections.jsonl
+```
+
+The contact sheets show green boxes for detections at or above the on-screen threshold (0.6). Yellow boxes are near
+misses that were only recorded.
+
 Ultralytics YOLO is licensed under AGPL-3.0. That's fine for prototyping. A release needs a permissively licensed
 detector or a commercial licence.
