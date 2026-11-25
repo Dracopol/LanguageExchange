@@ -4,7 +4,7 @@
 #include "Engine/World.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
-#include "MediaTexture.h"
+#include "Engine/Texture.h"
 #include "Rendering/DrawElements.h"
 #include "Rendering/SlateRenderer.h"
 #include "Styling/CoreStyle.h"
@@ -57,10 +57,10 @@ int32 ULanguageExchangeDetectionWidget::NativePaint(const FPaintArgs& Args, cons
 	// Camera image, as large as fits and centred; detection bounds are relative to it
 	const FVector2D WidgetSize = AllottedGeometry.GetLocalSize();
 	FBox2D ImageRect(FVector2D::ZeroVector, WidgetSize);
-	const UMediaTexture* const CameraTexture = Subsystem->GetCameraTexture();
-	if (IsValid(CameraTexture) && CameraTexture->GetWidth() > 0 && CameraTexture->GetHeight() > 0)
+	const FIntPoint CameraSizePixels = Subsystem->GetCameraSizePixels();
+	if (IsValid(Subsystem->GetCameraTexture()) && CameraSizePixels.X > 0 && CameraSizePixels.Y > 0)
 	{
-		const FVector2D CameraSize(CameraTexture->GetWidth(), CameraTexture->GetHeight());
+		const FVector2D CameraSize(CameraSizePixels);
 		const double Scale = FMath::Min(WidgetSize.X / CameraSize.X, WidgetSize.Y / CameraSize.Y);
 		const FVector2D ImageSize = CameraSize * Scale;
 		const FVector2D ImageOffset = (WidgetSize - ImageSize) * 0.5;

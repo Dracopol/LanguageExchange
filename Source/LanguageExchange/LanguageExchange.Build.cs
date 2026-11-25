@@ -19,9 +19,11 @@ public class LanguageExchange : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"AndroidPermission",
 			"HeadMountedDisplay",
 			"ImageCore",
 			"MediaAssets",
+			"MRUtilityKit",
 			"NNE",
 			// OculusXRPassthrough's public headers include OculusXRHMD's
 			"OculusXRHMD",

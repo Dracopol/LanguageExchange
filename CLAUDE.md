@@ -94,9 +94,10 @@ performance on Quest.
 
 ### Notes for step 3
 
-- NNE's ONNX Runtime plugin (`NNERuntimeORT`) is desktop only (Win64, Linux, Mac). On Quest (Android), try
-  `NNERuntimeIREECpu` (experimental plugin `NNERuntimeIREE`, compiles the model ahead of time per platform); the
-  runtime is a setting, so the code doesn't change.
+- NNE has no CPU runtime for Android in the launcher's UE 5.8: `NNERuntimeORT` is desktop only, and
+  `NNERuntimeIREE` (experimental) ships runtime libraries only for Windows and compile configurations only for
+  desktop → desktop. `NNERuntimeBasicCpu` only handles simple networks (no convolutions). So on the Quest the model
+  needs a runtime outside NNE (e.g. ONNX Runtime for Android, LiteRT), or detection on a PC (device plan B).
 - Camera access in Unreal goes through Meta's Mixed Reality Utility Kit (part of the Meta XR plugin):
   `UMRUKPassthroughCameraAccess::Play()` on a `PassthroughCameraAccess` asset fills a `PassthroughCameraAccessTexture`;
   needs Horizon OS v74+ and `horizonos.permission.HEADSET_CAMERA` (or `android.permission.CAMERA`). The detection

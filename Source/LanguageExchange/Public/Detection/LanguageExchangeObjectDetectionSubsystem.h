@@ -1,13 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Detection/LanguageExchangeDetection.h"
 #include "Async/Future.h"
+#include "Detection/LanguageExchangeDetection.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "LanguageExchangeObjectDetectionSubsystem.generated.h"
 
-class UMediaPlayer;
-class UMediaTexture;
+class ULanguageExchangeCameraSource;
+class UTexture;
 class UTextureRenderTarget2D;
 struct FStreamableHandle;
 
@@ -18,8 +18,8 @@ namespace LanguageExchange::Detection
 }
 
 // Runs object detection on the camera image a few times per second in game and PIE worlds.
-// The camera goes through Unreal's Media Framework (a webcam on PC); the model runs on an NNE CPU runtime.
-// Settings: Project Settings > LanguageExchange > Object Detection.
+// The camera is the headset's passthrough camera when a headset is active (on the Quest, or over Link), otherwise a
+// webcam; the model runs on an NNE CPU runtime. Settings: Project Settings > LanguageExchange > Object Detection.
 UCLASS()
 class ULanguageExchangeObjectDetectionSubsystem : public UTickableWorldSubsystem
 {
@@ -38,7 +38,11 @@ public:
 	virtual TStatId GetStatId() const override;
 
 	// Functions
-	UMediaTexture* GetCameraTexture() const { return CameraTexture; }
+
+	// The latest camera image, or nullptr; its size is GetCameraSizePixels()
+	UTexture* GetCameraTexture() const;
+	FIntPoint GetCameraSizePixels() const;
+
 	// Latest detections; bounds are normalised to the camera image
 	const TArray<FLanguageExchangeDetection>& GetDetections() const { return Detections; }
 	float GetInferenceMilliseconds() const { return InferenceMilliseconds; }
@@ -51,12 +55,6 @@ protected:
 
 private:
 	// Event handlers
-	UFUNCTION()
-	void HandleCameraOpen(FString OpenedUrl);
-
-	UFUNCTION()
-	void HandleCameraOpenFail(FString FailedUrl);
-
 	void HandleModelLoad();
 	void HandleDetectionTimer();
 
@@ -72,10 +70,7 @@ private:
 
 	// State
 	UPROPERTY()
-	TObjectPtr<UMediaPlayer> CameraPlayer;
-
-	UPROPERTY()
-	TObjectPtr<UMediaTexture> CameraTexture;
+	TObjectPtr<ULanguageExchangeCameraSource> CameraSource;
 
 	UPROPERTY()
 	TObjectPtr<UTextureRenderTarget2D> ModelInputTarget;
@@ -85,7 +80,7 @@ private:
 	TSharedPtr<LanguageExchange::Detection::FDetectionJob> CurrentJob;
 	TFuture<void> InferenceFuture;
 	FTimerHandle DetectionTimerHandle;
-	bool bIsCameraOpen = false;
+	bool bHasCapturedFrame = false;
 	bool bIsInferenceRunning = false;
 	FText ErrorText;
 

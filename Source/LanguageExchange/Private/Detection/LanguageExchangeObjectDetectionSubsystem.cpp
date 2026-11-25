@@ -1,6 +1,8 @@
 #include "Detection/LanguageExchangeObjectDetectionSubsystem.h"
 
 #include "Async/Async.h"
+#include "Camera/LanguageExchangeHeadsetCameraSource.h"
+#include "Camera/LanguageExchangeWebcamSource.h"
 #include "Detection/CocoClassNames.h"
 #include "Detection/DetectionJob.h"
 #include "Detection/LanguageExchangeDetectionSettings.h"
@@ -12,15 +14,13 @@
 #include "Engine/World.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
 #include "ImageCore.h"
 #include "ImageUtils.h"
 #include "Kismet/KismetRenderingLibrary.h"
 #include "LanguageExchange.h"
-#include "MediaPlayer.h"
-#include "MediaTexture.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
-#include "Misc/MediaBlueprintFunctionLibrary.h"
 #include "Misc/Paths.h"
 #include "NNEModelData.h"
 #include "RenderingThread.h"
@@ -146,11 +146,9 @@ void ULanguageExchangeObjectDetectionSubsystem::Deinitialize()
 		CurrentJob.Reset();
 	}
 
-	if (IsValid(CameraPlayer))
+	if (IsValid(CameraSource))
 	{
-		CameraPlayer->OnMediaOpened.RemoveAll(this);
-		CameraPlayer->OnMediaOpenFailed.RemoveAll(this);
-		CameraPlayer->Close();
+		CameraSource->Close();
 	}
 
 	if (InferenceCount > 1)
@@ -197,13 +195,35 @@ TStatId ULanguageExchangeObjectDetectionSubsystem::GetStatId() const
 	RETURN_QUICK_DECLARE_CYCLE_STAT(ULanguageExchangeObjectDetectionSubsystem, STATGROUP_Tickables);
 }
 
+UTexture* ULanguageExchangeObjectDetectionSubsystem::GetCameraTexture() const
+{
+	if (!IsValid(CameraSource))
+	{
+		return nullptr;
+	}
+	return CameraSource->GetTexture();
+}
+
+FIntPoint ULanguageExchangeObjectDetectionSubsystem::GetCameraSizePixels() const
+{
+	if (!IsValid(CameraSource))
+	{
+		return FIntPoint::ZeroValue;
+	}
+	return CameraSource->GetSizePixels();
+}
+
 FText ULanguageExchangeObjectDetectionSubsystem::GetStatusText() const
 {
 	if (!ErrorText.IsEmpty())
 	{
 		return ErrorText;
 	}
-	if (!bIsCameraOpen)
+	if (IsValid(CameraSource) && !CameraSource->GetErrorText().IsEmpty())
+	{
+		return CameraSource->GetErrorText();
+	}
+	if (!IsValid(CameraSource) || !CameraSource->IsOpen())
 	{
 		return LOCTEXT("OpeningCamera", "Opening the camera...");
 	}
@@ -217,18 +237,6 @@ FText ULanguageExchangeObjectDetectionSubsystem::GetStatusText() const
 bool ULanguageExchangeObjectDetectionSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const
 {
 	return WorldType == EWorldType::Game || WorldType == EWorldType::PIE;
-}
-
-void ULanguageExchangeObjectDetectionSubsystem::HandleCameraOpen(FString OpenedUrl)
-{
-	UE_LOG(LogLanguageExchange, Log, TEXT("Camera open: %s"), *OpenedUrl);
-	bIsCameraOpen = true;
-}
-
-void ULanguageExchangeObjectDetectionSubsystem::HandleCameraOpenFail(FString FailedUrl)
-{
-	UE_LOG(LogLanguageExchange, Error, TEXT("Opening the camera failed: %s"), *FailedUrl);
-	ErrorText = LOCTEXT("CameraOpenFail", "The camera couldn't be opened. Is another app using it?");
 }
 
 void ULanguageExchangeObjectDetectionSubsystem::HandleModelLoad()
@@ -282,7 +290,7 @@ void ULanguageExchangeObjectDetectionSubsystem::HandleModelLoad()
 void ULanguageExchangeObjectDetectionSubsystem::HandleDetectionTimer()
 {
 	// Skip this round if the previous frame is still on its way
-	if (!bIsCameraOpen || !Model.IsValid() || CurrentJob.IsValid())
+	if (!IsValid(CameraSource) || !CameraSource->IsOpen() || !Model.IsValid() || CurrentJob.IsValid())
 	{
 		return;
 	}
@@ -291,45 +299,18 @@ void ULanguageExchangeObjectDetectionSubsystem::HandleDetectionTimer()
 
 void ULanguageExchangeObjectDetectionSubsystem::OpenCamera()
 {
-	TArray<FMediaCaptureDevice> CameraDevices;
-	UMediaBlueprintFunctionLibrary::EnumerateVideoCaptureDevices(CameraDevices);
-	for (int32 DeviceIndex = 0; DeviceIndex < CameraDevices.Num(); ++DeviceIndex)
+	// With a headset (on the Quest, or over Link) detect on what the player sees; otherwise use a webcam
+	if (UHeadMountedDisplayFunctionLibrary::IsHeadMountedDisplayEnabled())
 	{
-		UE_LOG(LogLanguageExchange, Log, TEXT("Camera %d: %s (%s)"), DeviceIndex,
-			*CameraDevices[DeviceIndex].DisplayName.ToString(), *CameraDevices[DeviceIndex].Url);
+		UE_LOG(LogLanguageExchange, Log, TEXT("Headset active: using the headset's passthrough camera"));
+		CameraSource = NewObject<ULanguageExchangeHeadsetCameraSource>(this);
 	}
-
-	if (CameraDevices.IsEmpty())
+	else
 	{
-		UE_LOG(LogLanguageExchange, Error, TEXT("No camera found"));
-		ErrorText = LOCTEXT("NoCamera", "No camera found");
-		return;
+		UE_LOG(LogLanguageExchange, Log, TEXT("No headset active: using a webcam"));
+		CameraSource = NewObject<ULanguageExchangeWebcamSource>(this);
 	}
-
-	int32 CameraIndex = GetDefault<ULanguageExchangeDetectionSettings>()->GetCameraIndex();
-	if (!CameraDevices.IsValidIndex(CameraIndex))
-	{
-		UE_LOG(LogLanguageExchange, Warning, TEXT("Camera %d doesn't exist; using camera 0"), CameraIndex);
-		CameraIndex = 0;
-	}
-
-	CameraPlayer = NewObject<UMediaPlayer>(this);
-	CameraPlayer->PlayOnOpen = true;
-	CameraPlayer->OnMediaOpened.AddDynamic(this, &ThisClass::HandleCameraOpen);
-	CameraPlayer->OnMediaOpenFailed.AddDynamic(this, &ThisClass::HandleCameraOpenFail);
-
-	CameraTexture = NewObject<UMediaTexture>(this);
-	CameraTexture->SetMediaPlayer(CameraPlayer);
-	CameraTexture->UpdateResource();
-
-	const FMediaCaptureDevice& CameraDevice = CameraDevices[CameraIndex];
-	UE_LOG(LogLanguageExchange, Log, TEXT("Opening camera %d: %s"), CameraIndex,
-		*CameraDevice.DisplayName.ToString());
-	if (!CameraPlayer->OpenUrl(CameraDevice.Url))
-	{
-		UE_LOG(LogLanguageExchange, Error, TEXT("No media player can open %s"), *CameraDevice.Url);
-		ErrorText = LOCTEXT("CameraUnsupported", "The camera couldn't be opened (see the log)");
-	}
+	CameraSource->Open();
 }
 
 void ULanguageExchangeObjectDetectionSubsystem::LoadModelAsync()
@@ -349,12 +330,21 @@ void ULanguageExchangeObjectDetectionSubsystem::LoadModelAsync()
 
 void ULanguageExchangeObjectDetectionSubsystem::StartFrameCapture()
 {
-	const int32 CameraWidth = CameraTexture->GetWidth();
-	const int32 CameraHeight = CameraTexture->GetHeight();
-	if (CameraWidth <= 0 || CameraHeight <= 0)
+	UTexture* const CameraTexture = CameraSource->GetTexture();
+	const FIntPoint CameraSizePixels = CameraSource->GetSizePixels();
+	const int32 CameraWidth = CameraSizePixels.X;
+	const int32 CameraHeight = CameraSizePixels.Y;
+	if (!IsValid(CameraTexture) || CameraWidth <= 0 || CameraHeight <= 0)
 	{
 		// No camera frame yet
 		return;
+	}
+
+	if (!bHasCapturedFrame)
+	{
+		bHasCapturedFrame = true;
+		UE_LOG(LogLanguageExchange, Log, TEXT("First camera frame for detection: %d x %d"), CameraWidth,
+			CameraHeight);
 	}
 
 	// Letterbox: scale the camera image to fit the square model input and centre it

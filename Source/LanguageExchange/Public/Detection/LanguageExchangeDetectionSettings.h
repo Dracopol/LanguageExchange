@@ -19,6 +19,8 @@ public:
 	const TSoftObjectPtr<UNNEModelData>& GetModel() const { return Model; }
 	const FString& GetRuntimeName() const { return RuntimeName; }
 	int32 GetCameraIndex() const { return CameraIndex; }
+	FIntPoint GetHeadsetCameraResolutionPixels() const { return HeadsetCameraResolutionPixels; }
+	int32 GetHeadsetCameraMaxFramesPerSecond() const { return HeadsetCameraMaxFramesPerSecond; }
 	float GetMinimumConfidence() const { return MinimumConfidence; }
 	float GetMaximumBoxOverlap() const { return MaximumBoxOverlap; }
 	float GetDetectionIntervalSeconds() const { return DetectionIntervalSeconds; }
@@ -37,9 +39,18 @@ private:
 	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection")
 	FString RuntimeName = TEXT("NNERuntimeORTCpu");
 
-	// Index into the list of video capture devices (the log lists them at startup)
+	// Webcam (used when no headset is active): index into the list of video capture devices (the log lists them)
 	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection", meta = (ClampMin = "0"))
 	int32 CameraIndex = 0;
+
+	// Headset passthrough camera resolution; 640 x 480 fills the 640 px model input without scaling.
+	// Supported on Quest 3: 320 x 240, 640 x 480, 800 x 600, 1280 x 960
+	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection")
+	FIntPoint HeadsetCameraResolutionPixels = FIntPoint(640, 480);
+
+	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection",
+		meta = (ClampMin = "1", ClampMax = "60"))
+	int32 HeadsetCameraMaxFramesPerSecond = 30;
 
 	// Detections below this confidence are dropped
 	UPROPERTY(Config, EditDefaultsOnly, Category = "LanguageExchange|Detection",
