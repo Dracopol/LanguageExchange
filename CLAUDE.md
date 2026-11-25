@@ -97,17 +97,57 @@ performance on Quest.
 - NNE's ONNX Runtime plugin (`NNERuntimeORT`) is desktop only (Win64, Linux, Mac). On Quest (Android), try
   `NNERuntimeIREECpu` (experimental plugin `NNERuntimeIREE`, compiles the model ahead of time per platform); the
   runtime is a setting, so the code doesn't change.
-- The engine has an `AndroidCamera` media plugin; if the Passthrough Camera API frames can come through the Media
-  Framework, the capture code stays the same too.
-- The Android SDK isn't set up in Unreal yet (`Failed to SetupSDK for platform 'Android'`).
+- Camera access in Unreal goes through Meta's Mixed Reality Utility Kit (part of the Meta XR plugin):
+  `UMRUKPassthroughCameraAccess::Play()` on a `PassthroughCameraAccess` asset fills a `PassthroughCameraAccessTexture`;
+  needs Horizon OS v74+ and `horizonos.permission.HEADSET_CAMERA` (or `android.permission.CAMERA`). The detection
+  subsystem only needs a texture, so the webcam's `UMediaTexture` can be swapped for it.
+- Per Meta's MRUK docs, Meta Horizon Link v201+ also supports the Passthrough Camera API (unverified here), which
+  would allow developing camera + detection from the PC.
 - The soft model reference in the settings must be cooked: add the model folder to "Additional Asset Directories to
   Cook" when packaging.
+
+### Step 3: Quest setup (done on the user's PC)
+
+- Device: Quest 3, Horizon OS v210, developer mode on, USB debugging authorised.
+- Android toolchain for UE 5.8: Android Studio Koala 2024.1.2 Patch 1 (`winget install --id Google.AndroidStudio
+  --version 2024.1.2.13 --exact`), run once for the SDK, plus "Android SDK Command-line Tools (latest)" from its SDK
+  Manager; then `Engine/Extras/Android/SetupAndroid.bat android-36 36.0.0 3.22.1 27.2.12479018` (NDK r27c, sets
+  `ANDROID_HOME`, `JAVA_HOME`, `NDKROOT`). The launcher's UE 5.8 also needs the **Android target platform** option.
+  Check: `RunUAT Turnkey -command=VerifySdk -platforms=Android -device=Android@All -UpdateIfNeeded=false`.
+- Meta XR plugin v209 (for UE 5.8.0; includes MRUK) from Meta's "Unreal Engine 5 Integration" download, copied to
+  `Engine/Plugins/Marketplace/MetaXR` (Meta's documented location; not in this repo). Its build ID matches the
+  launcher's 5.8 build. On PC, Meta's OVRPlugin path fails (UE's Windows OpenXR loader is 1.0.25, the plugin asks for
+  OpenXR 1.1) and Unreal falls back to its own OpenXR; this doesn't affect Android builds.
+- Project settings from Meta's Project Setup Tool (Meta XR Tools > Project Setup Tool): all required rules (also on
+  the Quest 3 tab), recommended rules except "Framebuffer Fetch" and "Static Lighting"; mobile shading set to Forward
+  (needed for MSAA, which passthrough requires). Passthrough and Passthrough Camera Access enabled; package name
+  `com.razvan.languageexchange`. `Build/Android` (Horizon OS manifest additions, icons) is versioned.
+- `ALanguageExchangePlayerPawn`: camera locked to the headset, floor-level tracking origin, starts Meta's persistent
+  passthrough (underlay). Start level: `/Game/LanguageExchange/Maps/Main` (empty level, so passthrough shows).
+- Testing the webcam on PC now needs `-nohmd`, since the project starts in VR.
+- Build + install on the headset (USB): `RunUAT BuildCookRun -project=<uproject> -platform=Android -cookflavor=ASTC
+  -clientconfig=Development -build -cook -stage -pak -package -deploy -device=<adb serial> -nocompileeditor`
+  (rebuild the editor target first when C++ changed; about 7 minutes). The app's log on the headset:
+  `/sdcard/Android/data/com.razvan.languageexchange/files/UnrealGame/LanguageExchange/LanguageExchange/Saved/Logs/`;
+  frame stats: `adb logcat -s VrApi`.
+- Android gotcha: the launcher's prebuilt engine uses emulated thread-locals, our code (NDK API 32, required by Meta)
+  native ones. Engine header code that reads an engine `thread_local` directly fails to link
+  (`undefined symbol: LowLevelTasks::FTask::ActiveTask` from `UE::Tasks::Launch`). Use
+  `Async(EAsyncExecution::ThreadPool, ...)` for background work instead.
+
+### Step 3 results so far
+
+- Passthrough app runs on the Quest 3: steady 72 FPS, about 2.3 ms GPU per frame for the (empty) app. Fast head
+  movement looks blurry; that's the passthrough cameras, not the app. Later: raise the display rate to 90/120 Hz.
+- Expected errors until the next steps: "No camera found" (webcam path) and no NNE CPU runtime on Android (IREE not
+  enabled yet). MRUK logs `PcaCameraOpenXR::isSupported XR_ERROR_FUNCTION_UNSUPPORTED` at startup; check whether
+  camera access falls back to Camera2 when we use it.
 
 ## Device plan
 
 - A (goal): standalone Quest app, camera and model both on the headset.
 - B (fallback if the Quest is too slow): still a standalone app, but camera frames go over Wi-Fi to a PC/server
   for detection (adds about 50–150 ms; camera images leave the headset).
-- C: PCVR via Link is not an option for detection — as far as known, the Passthrough Camera API only gives frames
-  to apps running on the headset (verify against Meta's current docs). PCVR stays useful for developing the
-  non-camera parts (UI, multiplayer, word lists).
+- C: PCVR via Link: not the product, but useful for development. Meta's MRUK docs say the Passthrough Camera API
+  works over Meta Horizon Link v201+ (unverified here), which would let camera + detection be developed from the PC.
+  PCVR is useful for the non-camera parts too (UI, multiplayer, word lists).

@@ -1,5 +1,6 @@
 #include "Detection/LanguageExchangeObjectDetectionSubsystem.h"
 
+#include "Async/Async.h"
 #include "Detection/CocoClassNames.h"
 #include "Detection/DetectionJob.h"
 #include "Detection/LanguageExchangeDetectionSettings.h"
@@ -134,7 +135,7 @@ void ULanguageExchangeObjectDetectionSubsystem::Deinitialize()
 
 	if (bIsInferenceRunning)
 	{
-		InferenceTask.Wait();
+		InferenceFuture.Wait();
 		bIsInferenceRunning = false;
 	}
 
@@ -170,7 +171,7 @@ void ULanguageExchangeObjectDetectionSubsystem::Tick(const float DeltaTime)
 
 	if (bIsInferenceRunning)
 	{
-		if (InferenceTask.IsCompleted())
+		if (InferenceFuture.IsReady())
 		{
 			FinishInference();
 		}
@@ -429,8 +430,10 @@ void ULanguageExchangeObjectDetectionSubsystem::StartInference()
 		MinimumConfidence = FMath::Min(MinimumConfidence, Settings->GetRecordingMinimumConfidence());
 	}
 
-	// The task owns shared references, so it stays valid even if the subsystem goes away first
-	InferenceTask = UE::Tasks::Launch(UE_SOURCE_LOCATION,
+	// The work owns shared references, so it stays valid even if the subsystem goes away first.
+	// The thread pool instead of UE::Tasks::Launch: on Android, UE::Tasks' header code reads an engine thread_local
+	// directly, and our module (NDK API 32, native TLS) can't link against the prebuilt engine (emulated TLS).
+	InferenceFuture = Async(EAsyncExecution::ThreadPool,
 		[Job = CurrentJob.ToSharedRef(), DetectionModel = Model.ToSharedRef(), MinimumConfidence, MaximumBoxOverlap]()
 		{
 			Job->Detections = DetectionModel->Detect(Job->Pixels, MinimumConfidence, MaximumBoxOverlap,
@@ -492,8 +495,8 @@ void ULanguageExchangeObjectDetectionSubsystem::RecordFrame(const TSharedRef<FDe
 	++RecordedFrameCount;
 	const FString FrameFileName = FString::Printf(TEXT("Frame%05d.png"), RecordedFrameCount);
 
-	// Encoding a PNG takes a while, so it happens on a worker thread
-	UE::Tasks::Launch(UE_SOURCE_LOCATION, [Job, FilePath = RecordingDirectory / FrameFileName]()
+	// Encoding a PNG takes a while, so it happens on a worker thread (thread pool: see StartInference)
+	Async(EAsyncExecution::ThreadPool, [Job, FilePath = RecordingDirectory / FrameFileName]()
 	{
 		LanguageExchange::Detection::SaveModelInput(*Job, FilePath);
 	});

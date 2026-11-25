@@ -2,8 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "Detection/LanguageExchangeDetection.h"
+#include "Async/Future.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "Tasks/Task.h"
 #include "LanguageExchangeObjectDetectionSubsystem.generated.h"
 
 class UMediaPlayer;
@@ -83,7 +83,7 @@ private:
 	TSharedPtr<FStreamableHandle> ModelLoadHandle;
 	TSharedPtr<LanguageExchange::Detection::FYoloModel> Model;
 	TSharedPtr<LanguageExchange::Detection::FDetectionJob> CurrentJob;
-	UE::Tasks::FTask InferenceTask;
+	TFuture<void> InferenceFuture;
 	FTimerHandle DetectionTimerHandle;
 	bool bIsCameraOpen = false;
 	bool bIsInferenceRunning = false;

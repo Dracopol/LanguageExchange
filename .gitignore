@@ -9,6 +9,9 @@ Build/*/**
 !Build/**/*.ini
 !Build/**/*.png
 !Build/**/*.xml
+# Android project inputs (Horizon OS manifest additions, icons), created by Project Settings > Android > Configure Now
+!Build/Android/
+!Build/Android/**
 
 # Plugin build output
 Plugins/**/Binaries/

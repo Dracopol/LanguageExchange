@@ -21,6 +21,10 @@
 		{
 			"Name": "NNERuntimeORT",
 			"Enabled": true
+		},
+		{
+			"Name": "OculusXR",
+			"Enabled": true
 		}
 	]
 }

@@ -19,13 +19,18 @@ public class LanguageExchange : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"HeadMountedDisplay",
 			"ImageCore",
 			"MediaAssets",
 			"NNE",
+			// OculusXRPassthrough's public headers include OculusXRHMD's
+			"OculusXRHMD",
+			"OculusXRPassthrough",
 			"RenderCore",
 			"RHI",
 			"Slate",
 			"SlateCore",
+			"XRBase",
 		});
 	}
 }
