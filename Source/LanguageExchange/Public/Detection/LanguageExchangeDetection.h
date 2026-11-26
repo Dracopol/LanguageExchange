@@ -34,4 +34,9 @@ struct FLanguageExchangeDetection
 
 	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
 	FVector WorldRayDirection = FVector::ForwardVector;
+
+	// Ray directions through the box corners (top left, top right, bottom right, bottom left), from WorldRayOrigin.
+	// Empty without a world ray.
+	UPROPERTY(BlueprintReadOnly, Category = "LanguageExchange|Detection")
+	TArray<FVector> WorldCornerDirections;
 };

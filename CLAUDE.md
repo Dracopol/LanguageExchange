@@ -42,10 +42,18 @@ Planned pieces:
    (`TryGetCameraPose`, the pose of the latest camera image) and turns a box centre into a world ray with that pose
    (`TryGetImageRay`, MRUK's `ViewportPointToWorldSpaceRay` maths with a given pose, because detection finishes
    ~0.1 s later). `ALanguageExchangeDetectionLabels` (spawned by the player controller when a headset is active)
-   listens to the subsystem's `OnDetectionsChange` and places a 3D text per detection 80 cm along its ray, facing
-   the camera. Tested on Quest 3: labels follow the objects, 72 FPS, no stale frames.
-   Next: smooth labels over time (they're replaced 4x per second and flicker), real depth instead of the fixed
-   80 cm (e.g. MRUK's room mesh or Meta's depth API), then pointing.
+   listens to the subsystem's `OnDetectionsChange` and shows, per detection, a green frame around the object and a
+   name panel on its upper edge, facing the camera. Both are world-space `UWidgetComponent`s with C++-only widgets
+   (`ULanguageExchangeFrameWidget`, `ULanguageExchangeLabelWidget`, drawn in `NativePaint`); the engine's 3D text
+   materials are lit and show black in the unlit passthrough level. The subsystem also turns the box corners into
+   rays (`WorldCornerDirections`). The distance is estimated from a typical size per class and the box's angular
+   size (unknown classes: 80 cm); the frame corners go where their rays meet a plane at that distance. The headset
+   camera image is upside down relative to the room, so frames and text are oriented by world up.
+   Tested on Quest 3: frames fit the objects, text upright, both eyes, 72 FPS.
+   Console variable `LanguageExchange.Labels.ShowTestLabel 1` (at startup) shows one fixed label 1 m ahead instead
+   of the detections, for checking rendering without detection.
+   Next: the name panel sometimes overlaps the frame or floats above it; smooth labels over time (they're replaced
+   4x per second and flicker); real depth (e.g. MRUK's room mesh or Meta's depth API); then pointing.
 
 Open for later: LiteRT (option B) as a comparison to ONNX Runtime; display rate 90/120 Hz; a world-space status
 display instead of the 2D overlay (not visible in VR).
@@ -144,6 +152,9 @@ performance on Quest.
   (rebuild the editor target first when C++ changed; about 7 minutes). The app's log on the headset:
   `/sdcard/Android/data/com.razvan.languageexchange/files/UnrealGame/LanguageExchange/LanguageExchange/Saved/Logs/`;
   frame stats: `adb logcat -s VrApi`.
+- VR gotcha: don't add UMG widgets to the viewport (`AddToViewport`) when a headset is active. On Quest, Slate draws
+  them into the left eye's image, which then shows none of the scene (only passthrough); the right eye looks fine.
+  The 2D detection overlay is therefore only created without a headset.
 - Android gotcha: the launcher's prebuilt engine uses emulated thread-locals, our code (NDK API 32, required by Meta)
   native ones. Engine header code that reads an engine `thread_local` directly fails to link
   (`undefined symbol: LowLevelTasks::FTask::ActiveTask` from `UE::Tasks::Launch`). Use

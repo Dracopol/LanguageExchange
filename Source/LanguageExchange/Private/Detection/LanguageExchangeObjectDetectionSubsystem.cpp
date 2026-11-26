@@ -567,6 +567,19 @@ void ULanguageExchangeObjectDetectionSubsystem::FinishInference()
 		{
 			Detection.bHasWorldRay = CameraSource->TryGetImageRay(Bounds.GetCenter(), Job->CameraPose,
 				Detection.WorldRayOrigin, Detection.WorldRayDirection);
+
+			const FVector2D Corners[] = { Bounds.Min, FVector2D(Bounds.Max.X, Bounds.Min.Y), Bounds.Max,
+				FVector2D(Bounds.Min.X, Bounds.Max.Y) };
+			for (const FVector2D& Corner : Corners)
+			{
+				FVector CornerOrigin;
+				FVector CornerDirection;
+				if (Detection.bHasWorldRay
+					&& CameraSource->TryGetImageRay(Corner, Job->CameraPose, CornerOrigin, CornerDirection))
+				{
+					Detection.WorldCornerDirections.Add(CornerDirection);
+				}
+			}
 		}
 		Detections.Add(Detection);
 	}
