@@ -107,6 +107,7 @@ void ALanguageExchangeDetectionLabels::ShowDetection(const int32 DetectionIndex,
 	const float DistanceCentimeters = EstimateDistanceCentimeters(Detection);
 	const FVector& Origin = Detection.WorldRayOrigin;
 	const FVector& CentreDirection = Detection.WorldRayDirection;
+	const FVector PlaneCentre = Origin + CentreDirection * DistanceCentimeters;
 	TArray<FVector, TInlineAllocator<4>> Corners;
 	for (const FVector& CornerDirection : Detection.WorldCornerDirections)
 	{
@@ -114,40 +115,53 @@ void ALanguageExchangeDetectionLabels::ShowDetection(const int32 DetectionIndex,
 		Corners.Add(Origin + CornerDirection * (DistanceCentimeters / AlongCentre));
 	}
 
-	// The camera image's top isn't the world's top (the headset camera image is stored upside down relative to the
-	// room), so orient by the world: text stays upright and the label goes on the upper edge
-	const FVector ImageTopEdge = (Corners[TopLeft] + Corners[TopRight]) * 0.5;
-	const FVector ImageBottomEdge = (Corners[BottomLeft] + Corners[BottomRight]) * 0.5;
-	FVector FrameUp = (ImageTopEdge - ImageBottomEdge).GetSafeNormal();
-	FVector UpperEdge = ImageTopEdge;
-	if (FrameUp.Z < 0.0)
+	// Frame and text stay upright in the room even when the head was tilted: up is the world's up within the plane,
+	// or the image's up when looking almost straight up or down
+	FVector UpInPlane = FVector::VectorPlaneProject(FVector::UpVector, CentreDirection);
+	if (UpInPlane.SizeSquared() < 0.01)
 	{
-		FrameUp = -FrameUp;
-		UpperEdge = ImageBottomEdge;
+		UpInPlane = (Corners[TopLeft] + Corners[TopRight]) - (Corners[BottomLeft] + Corners[BottomRight]);
 	}
 
 	// Widgets face along their X axis
 	const FVector TowardCamera = -CentreDirection;
-	const FRotator FacingRotation = FRotationMatrix::MakeFromXZ(TowardCamera, FrameUp).Rotator();
+	const FMatrix Facing = FRotationMatrix::MakeFromXZ(TowardCamera, UpInPlane);
+	const FRotator FacingRotation = Facing.Rotator();
+	const FVector FrameRight = Facing.GetUnitAxis(EAxis::Y);
+	const FVector FrameUp = Facing.GetUnitAxis(EAxis::Z);
 
-	const double FrameWidth = FVector::Distance(Corners[TopLeft], Corners[TopRight]);
-	const double FrameHeight = FVector::Distance(Corners[TopLeft], Corners[BottomLeft]);
+	// The upright rectangle around the corners (larger than the camera's box when the head was tilted)
+	FBox2D Extent(ForceInit);
+	for (const FVector& Corner : Corners)
+	{
+		const FVector Offset = Corner - PlaneCentre;
+		Extent += FVector2D(FVector::DotProduct(Offset, FrameRight), FVector::DotProduct(Offset, FrameUp));
+	}
+	const FVector2D ExtentCentre = Extent.GetCenter();
+	const FVector FrameCentre = PlaneCentre + FrameRight * ExtentCentre.X + FrameUp * ExtentCentre.Y;
+	const double FrameWidth = FMath::Max(Extent.GetSize().X, 0.1);
+	const double FrameHeight = FMath::Max(Extent.GetSize().Y, 0.1);
+
 	UWidgetComponent* const Frame = GetOrCreateWidget(Frames, DetectionIndex,
 		ULanguageExchangeFrameWidget::StaticClass(), FrameSizePixels, FVector2D(0.5, 0.5));
-	Frame->SetWorldLocationAndRotation(Origin + CentreDirection * DistanceCentimeters, FacingRotation);
-	// Widget units are pixels: stretch the frame to the object's size
-	Frame->SetWorldScale3D(FVector(1.0, FrameWidth / FrameSizePixels.X, FrameHeight / FrameSizePixels.Y));
+	Frame->SetWorldLocationAndRotation(FrameCentre, FacingRotation);
+	// Widget units are pixels: stretch the frame to the object's size, and give the line the same thickness in the
+	// room on all four edges
+	const FVector2D FrameScale(FrameWidth / FrameSizePixels.X, FrameHeight / FrameSizePixels.Y);
+	Frame->SetWorldScale3D(FVector(1.0, FrameScale.X, FrameScale.Y));
 	if (ULanguageExchangeFrameWidget* const FrameWidget =
 		Cast<ULanguageExchangeFrameWidget>(Frame->GetUserWidgetObject()))
 	{
-		FrameWidget->SetFrameColor(HighlightColor);
+		const double LineThickness = FrameLineThicknessAtOneMeterCentimeters * DistanceCentimeters / 100.0;
+		FrameWidget->SetFrame(HighlightColor, FVector2D(LineThickness / FrameScale.X, LineThickness / FrameScale.Y));
 	}
 	Frame->SetVisibility(true);
 
 	// The label sits on the frame's top edge (its pivot is its bottom centre) and keeps its apparent size
 	UWidgetComponent* const Label = GetOrCreateWidget(Labels, DetectionIndex,
 		ULanguageExchangeLabelWidget::StaticClass(), LabelSizePixels, FVector2D(0.5, 1.0));
-	Label->SetWorldLocationAndRotation(UpperEdge, FacingRotation);
+	const FVector FrameTopCentre = FrameCentre + FrameUp * (FrameHeight * 0.5);
+	Label->SetWorldLocationAndRotation(FrameTopCentre, FacingRotation);
 	const double LabelWidth = LabelWidthAtOneMeterCentimeters * DistanceCentimeters / 100.0;
 	Label->SetWorldScale3D(FVector(LabelWidth / LabelSizePixels.X));
 	if (ULanguageExchangeLabelWidget* const LabelWidget =

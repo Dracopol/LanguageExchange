@@ -5,7 +5,8 @@
 #include "LanguageExchangeFrameWidget.generated.h"
 
 // A rectangular outline filling the widget, for highlighting a detected object through a world-space widget
-// component (which renders in both eyes, unlike line batches with mobile multiview). Draws itself in C++.
+// component. Draws itself in C++. The line thickness is set per axis, so the outline stays even when the component is
+// stretched to the object's size.
 UCLASS()
 class ULanguageExchangeFrameWidget : public UUserWidget
 {
@@ -13,7 +14,9 @@ class ULanguageExchangeFrameWidget : public UUserWidget
 
 public:
 	// Functions
-	void SetFrameColor(const FLinearColor& InFrameColor) { FrameColor = InFrameColor; }
+
+	// Line thickness in widget pixels: X for the left and right edges, Y for the top and bottom edges
+	void SetFrame(const FLinearColor& InFrameColor, const FVector2D& InLineThicknessPixels);
 
 protected:
 	// Functions
@@ -22,10 +25,7 @@ protected:
 		const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const override;
 
 private:
-	// Settings
-	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|UI", meta = (ClampMin = "1"))
-	float LineThicknessPixels = 6.0f;
-
 	// State
 	FLinearColor FrameColor = FLinearColor::Green;
+	FVector2D LineThicknessPixels = FVector2D(6.0, 6.0);
 };

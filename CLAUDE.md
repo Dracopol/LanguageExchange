@@ -47,13 +47,17 @@ Planned pieces:
    (`ULanguageExchangeFrameWidget`, `ULanguageExchangeLabelWidget`, drawn in `NativePaint`); the engine's 3D text
    materials are lit and show black in the unlit passthrough level. The subsystem also turns the box corners into
    rays (`WorldCornerDirections`). The distance is estimated from a typical size per class and the box's angular
-   size (unknown classes: 80 cm); the frame corners go where their rays meet a plane at that distance. The headset
-   camera image is upside down relative to the room, so frames and text are oriented by world up.
-   Tested on Quest 3: frames fit the objects, text upright, both eyes, 72 FPS.
+   size (unknown classes: 80 cm); the corners go where their rays meet a plane at that distance, and the frame is
+   the upright rectangle (by world up) around them, so it doesn't tilt with the head. The frame line and the label
+   keep their apparent size at any distance; the label sits on the frame's top edge.
+   MRUK gotcha: its viewport points start at the image's bottom left (Unity's convention), ours at the top left, so
+   `TryGetImageRay` flips Y. Without that, boxes were mirrored vertically: right straight ahead, but moving up when
+   looking up.
+   Tested on Quest 3: frames fit the objects, even lines, both eyes, 72 FPS.
    Console variable `LanguageExchange.Labels.ShowTestLabel 1` (at startup) shows one fixed label 1 m ahead instead
    of the detections, for checking rendering without detection.
-   Next: the name panel sometimes overlaps the frame or floats above it; smooth labels over time (they're replaced
-   4x per second and flicker); real depth (e.g. MRUK's room mesh or Meta's depth API); then pointing.
+   Next: smooth labels over time (they're replaced 4x per second and flicker); real depth (e.g. MRUK's room mesh or
+   Meta's depth API); then pointing.
 
 Open for later: LiteRT (option B) as a comparison to ONNX Runtime; display rate 90/120 Hz; a world-space status
 display instead of the 2D overlay (not visible in VR).
@@ -148,8 +152,13 @@ performance on Quest.
   passthrough (underlay). Start level: `/Game/LanguageExchange/Maps/Main` (empty level, so passthrough shows).
 - Testing the webcam on PC now needs `-nohmd`, since the project starts in VR.
 - Build + install on the headset (USB): `RunUAT BuildCookRun -project=<uproject> -platform=Android -cookflavor=ASTC
-  -clientconfig=Development -build -cook -stage -pak -package -deploy -device=<adb serial> -nocompileeditor`
-  (rebuild the editor target first when C++ changed; about 7 minutes). The app's log on the headset:
+  -clientconfig=Development -build -cook -stage -pak -package -deploy -NoObbs -device=<adb serial>
+  -nocompileeditor` (rebuild the editor target first when C++ changed; about 7 minutes).
+  `-NoObbs` matters: the install copies the data as loose files, but once `Saved/StagedBuilds/Android_ASTC.obb`
+  exists, the APK otherwise expects an OBB in `/sdcard/Android/obb/` and hangs on Unreal's downloader screen
+  (`DownloaderActivity`, a hidden "No OBB found" dialog). Apps started while the headset sleeps (not worn) can hang
+  the same way; start them while wearing it. If the headset isn't listed by `adb devices`, check Device Manager for a
+  USB root hub with error 43 (fixed by restarting Windows). The app's log on the headset:
   `/sdcard/Android/data/com.razvan.languageexchange/files/UnrealGame/LanguageExchange/LanguageExchange/Saved/Logs/`;
   frame stats: `adb logcat -s VrApi`.
 - VR gotcha: don't add UMG widgets to the viewport (`AddToViewport`) when a headset is active. On Quest, Slate draws

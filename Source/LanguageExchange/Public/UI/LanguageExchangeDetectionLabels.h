@@ -69,6 +69,10 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels")
 	FIntPoint FrameSizePixels = FIntPoint(256, 256);
 
+	// Frame line thickness at 1 m distance; scaled with distance so the line always looks equally thin
+	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels", meta = (ClampMin = "0.05", Units = "cm"))
+	float FrameLineThicknessAtOneMeterCentimeters = 0.4f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels")
 	FLinearColor HighlightColor = FLinearColor(0.2f, 1.0f, 0.3f);
 

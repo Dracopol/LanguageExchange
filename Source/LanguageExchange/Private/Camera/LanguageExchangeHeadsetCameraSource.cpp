@@ -110,7 +110,10 @@ bool ULanguageExchangeHeadsetCameraSource::TryGetImageRay(const FVector2D& Norma
 	CropScale /= FMath::Max(CropScale.X, CropScale.Y);
 	const FVector2D CropSize = SensorResolution * CropScale;
 	const FVector2D CropOffset = (SensorResolution - CropSize) * 0.5;
-	const FVector2D SensorPoint = CropOffset + CropSize * NormalizedImagePoint;
+	// MRUK's viewport points start at the image's bottom left (Unity's convention, positive Z is up); ours start at
+	// the top left, as the image is stored
+	const FVector2D ViewportPoint(NormalizedImagePoint.X, 1.0 - NormalizedImagePoint.Y);
+	const FVector2D SensorPoint = CropOffset + CropSize * ViewportPoint;
 
 	const FVector DirectionInCamera(1.0,
 		(SensorPoint.X - Intrinsics.PrincipalPoint.X) / Intrinsics.FocalLength.X,
