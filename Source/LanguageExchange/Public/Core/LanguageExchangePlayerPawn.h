@@ -7,7 +7,8 @@
 class UCameraComponent;
 
 // The local player in mixed reality: a camera that follows the headset, with the real world (passthrough) as the
-// background. Without a headset (e.g. the webcam test on PC) it's a plain camera.
+// background, and the headset's depth sensing (MRUK's environment raycaster, used for object distances and pointing).
+// Without a headset (e.g. the webcam test on PC) it's a plain camera.
 UCLASS()
 class ALanguageExchangePlayerPawn : public APawn
 {
@@ -20,10 +21,13 @@ public:
 protected:
 	// Setup
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 	// Functions
 	void StartPassthrough() const;
+	void StartDepthSensing() const;
+	void StopDepthSensing() const;
 
 	// Components
 

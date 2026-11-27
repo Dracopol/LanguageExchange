@@ -15,7 +15,7 @@ class UWidgetComponent;
 // Detections arrive a few times per second. Each is matched to an object already shown (by its direction from the
 // camera), whose frame then glides to the new place; the name shown is the class the object was detected as most over
 // the last moment. Objects stay shown for a moment after their last detection, so a missed detection doesn't make
-// them flicker.
+// them flicker. Objects the player points at (ALanguageExchangePointer) are shown in another colour.
 // The camera image has no depth, so the distance is measured with the headset's depth sensing (MRUK's environment
 // raycast through the box); without a depth hit it is estimated from the object's typical size and how large it
 // appears (unknown classes use a fixed distance). Placed at the object's distance, frame and panel line up with it for
@@ -31,6 +31,16 @@ public:
 
 	// Update
 	virtual void Tick(float DeltaSeconds) override;
+
+	// Functions
+
+	// The shown object a ray points at: the smallest frame it passes through, with a margin (so a cup in front of a
+	// table's frame wins over the table). The distance is along the ray, to the frame.
+	bool TryFindPointedLabel(const FVector& RayOrigin, const FVector& RayDirection, int32& OutLabelId,
+		double& OutDistanceCentimeters) const;
+
+	// Shows these objects in the pointed colour, all others in the normal one
+	void SetPointedLabels(TConstArrayView<int32> LabelIds);
 
 protected:
 	// Setup
@@ -116,6 +126,15 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels")
 	FLinearColor HighlightColor = FLinearColor(0.2f, 1.0f, 0.3f);
 
+	// For objects a pointer ray points at
+	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels")
+	FLinearColor PointedColor = FLinearColor(1.0f, 0.8f, 0.1f);
+
+	// How far outside its frame a ray may pass and still point at an object, at 1 m along the ray; grows with
+	// distance (3 cm at 1 m is an angle of about 1.7 degrees)
+	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels", meta = (ClampMin = "0", Units = "cm"))
+	float PointingMarginAtOneMeterCentimeters = 3.0f;
+
 	// State
 
 	// The objects shown now
@@ -129,5 +148,6 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<UWidgetComponent>> SpareLabels;
 
+	int32 NextTrackedLabelId = 0;
 	FDelegateHandle DetectionsChangeHandle;
 };

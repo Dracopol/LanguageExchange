@@ -61,14 +61,22 @@ Planned pieces:
    objects are shown. Tested on Quest 3: no more flicker.
    Console variable `LanguageExchange.Labels.ShowTestLabel 1` (at startup) shows one fixed label 1 m ahead instead
    of the detections, for checking rendering without detection.
-   Depth: the labels actor creates MRUK's environment raycaster (`UMRUKSubsystem::CreateEnvironmentRaycaster`, depth
-   sensing) and casts 5 rays per detection from the image's camera pose (box centre and halfway to each corner); the
-   median hit, measured along the centre ray, is the distance. Without a hit it falls back to the size estimate.
-   The label shows the distance (`~` = estimate); `LanguageExchange.Labels.UseDepth 0` switches depth off.
+   Depth: the pawn creates MRUK's environment raycaster (`UMRUKSubsystem::CreateEnvironmentRaycaster`, depth
+   sensing); the labels actor casts 5 rays per detection from the image's camera pose (box centre and halfway to each
+   corner); the median hit, measured along the centre ray, is the distance. Without a hit it falls back to the size
+   estimate. The label shows the distance (`~` = estimate); `LanguageExchange.Labels.UseDepth 0` switches depth off.
    Works over Link (depth found for 315 of 316 detections). Not yet on Quest: needs the scene permission
    (`com.oculus.permission.USE_SCENE`, manifest + runtime request). `OculusXRAnchors` is a module dependency because
    `MRUtilityKitSubsystem.h` includes its headers.
-   Next: pointing (hand ray cast against the depth, then the detected object at that point).
+   Pointing (branch `feature/pointing`): `ALanguageExchangePointer` (spawned by the player controller in VR, owned by
+   it) shows a beam per hand: a controller's aim pose (`GetMotionControllerState`, world space), else hand tracking's
+   pointing pose (`UOculusXRInputFunctionLibrary::GetPointerPose`, tracking space; Epic's OpenXR input has no aim
+   pose for hands). The beam ends on the shown object it points at (`TryFindPointedLabel`: ray through the frame's
+   plane, inside the frame plus a margin of 3 cm at 1 m, smallest frame wins), else on the real surface (depth
+   raycast), else after 1 m. Pointed objects turn yellow (`SetPointedLabels`). Beam and dot are widget components
+   with `ULanguageExchangeFillWidget`. `XrApi=NativeOpenXR`: the same Epic OpenXR input stack on PC and Quest.
+   `HandTrackingSupport=ControllersAndHands` (adds hand tracking to the Quest manifest). Tested over Link: works.
+   Next: select by pinch or dwell, then detect on a crop around the pointed point; the word list.
 
 ### Testing over Link (instead of building for the Quest)
 
@@ -81,7 +89,10 @@ Use it for everything except speed measurements, which need a Quest build.
 - `r.PostProcessing.PropagateAlpha=True` (desktop renderer only; the Quest uses `r.Mobile.PropagateAlpha`): without
   it the PC writes no alpha, and the headset shows passthrough but nothing of the app.
 - MRUK's camera stop crashes the editor when play ends on PC, so `ULanguageExchangeHeadsetCameraSource::Close` only
-  stops the camera on Android.
+  stops the camera on Android (the same for the depth raycaster in the pawn).
+- Lumen (GI and reflections) and virtual shadow maps are off for the desktop renderer: nothing to light in a
+  passthrough app, and they were the likely cause of "Video memory has been exhausted" in VR Preview (8 GB GPU). The
+  Quest's mobile renderer doesn't use them anyway.
 
 Open for later: LiteRT (option B) as a comparison to ONNX Runtime; display rate 90/120 Hz; a world-space status
 display instead of the 2D overlay (not visible in VR).

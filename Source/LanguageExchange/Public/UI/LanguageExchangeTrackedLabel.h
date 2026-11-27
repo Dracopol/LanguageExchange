@@ -13,6 +13,9 @@ struct FLanguageExchangeTrackedLabel
 {
 	GENERATED_BODY()
 
+	// Stays the same while the object is shown (its index in the list of shown objects doesn't)
+	int32 Id = INDEX_NONE;
+
 	UPROPERTY()
 	TObjectPtr<UWidgetComponent> Frame;
 
@@ -27,6 +30,10 @@ struct FLanguageExchangeTrackedLabel
 	TMap<FString, float> ClassScores;
 	FString ShownClassName;
 	float ShownConfidence = 0.0f;
+	FText LabelText;
 
 	double LastSeenSeconds = 0.0;
+
+	// A pointer ray points at it (shown in another colour)
+	bool bIsPointed = false;
 };

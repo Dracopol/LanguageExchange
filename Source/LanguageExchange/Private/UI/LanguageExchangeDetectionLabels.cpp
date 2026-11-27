@@ -84,12 +84,6 @@ void ALanguageExchangeDetectionLabels::BeginPlay()
 		DetectionsChangeHandle =
 			DetectionSubsystem->OnDetectionsChange.AddUObject(this, &ThisClass::HandleDetectionsChange);
 	}
-
-	// Takes a few frames to get ready; until then, and if it fails, distances are estimated
-	if (UMRUKSubsystem* const MixedRealitySubsystem = GetMixedRealitySubsystem())
-	{
-		MixedRealitySubsystem->CreateEnvironmentRaycaster();
-	}
 }
 
 void ALanguageExchangeDetectionLabels::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -99,15 +93,6 @@ void ALanguageExchangeDetectionLabels::EndPlay(const EEndPlayReason::Type EndPla
 	{
 		DetectionSubsystem->OnDetectionsChange.Remove(DetectionsChangeHandle);
 	}
-
-	// On PC (Link), MRUK's native calls crash once play has ended (the XR session is already gone); there, MRUK's own
-	// cleanup releases the raycaster
-#if PLATFORM_ANDROID
-	if (UMRUKSubsystem* const MixedRealitySubsystem = GetMixedRealitySubsystem())
-	{
-		MixedRealitySubsystem->DestroyEnvironmentRaycaster();
-	}
-#endif
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -135,6 +120,61 @@ void ALanguageExchangeDetectionLabels::Tick(const float DeltaSeconds)
 	if (TrackedLabels.IsEmpty())
 	{
 		SetActorTickEnabled(false);
+	}
+}
+
+bool ALanguageExchangeDetectionLabels::TryFindPointedLabel(const FVector& RayOrigin, const FVector& RayDirection,
+	int32& OutLabelId, double& OutDistanceCentimeters) const
+{
+	const FLanguageExchangeTrackedLabel* PointedLabel = nullptr;
+	double PointedAreaSquareCentimeters = 0.0;
+	for (const FLanguageExchangeTrackedLabel& TrackedLabel : TrackedLabels)
+	{
+		// Where the ray meets the plane of the frame as it is shown (the frame faces along its X axis)
+		const LanguageExchange::UserInterface::FLabelPlacement& Placement = TrackedLabel.ShownPlacement;
+		const FVector FrameNormal = Placement.Rotation.GetForwardVector();
+		const double Approach = FVector::DotProduct(RayDirection, FrameNormal);
+		if (FMath::Abs(Approach) < UE_KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+		const double Distance = FVector::DotProduct(Placement.Centre - RayOrigin, FrameNormal) / Approach;
+		if (Distance <= 0.0)
+		{
+			continue;
+		}
+
+		const FVector Offset = RayOrigin + RayDirection * Distance - Placement.Centre;
+		const double Margin = PointingMarginAtOneMeterCentimeters * Distance / 100.0;
+		const FVector2D MaximumOffset = Placement.SizeCentimeters * 0.5 + FVector2D(Margin, Margin);
+		if (FMath::Abs(FVector::DotProduct(Offset, Placement.Rotation.GetRightVector())) > MaximumOffset.X
+			|| FMath::Abs(FVector::DotProduct(Offset, Placement.Rotation.GetUpVector())) > MaximumOffset.Y)
+		{
+			continue;
+		}
+
+		const double AreaSquareCentimeters = Placement.SizeCentimeters.X * Placement.SizeCentimeters.Y;
+		if (PointedLabel == nullptr || AreaSquareCentimeters < PointedAreaSquareCentimeters)
+		{
+			PointedLabel = &TrackedLabel;
+			PointedAreaSquareCentimeters = AreaSquareCentimeters;
+			OutDistanceCentimeters = Distance;
+		}
+	}
+
+	if (PointedLabel == nullptr)
+	{
+		return false;
+	}
+	OutLabelId = PointedLabel->Id;
+	return true;
+}
+
+void ALanguageExchangeDetectionLabels::SetPointedLabels(const TConstArrayView<int32> LabelIds)
+{
+	for (FLanguageExchangeTrackedLabel& TrackedLabel : TrackedLabels)
+	{
+		TrackedLabel.bIsPointed = LabelIds.Contains(TrackedLabel.Id);
 	}
 }
 
@@ -278,19 +318,15 @@ void ALanguageExchangeDetectionLabels::UpdateTrackedLabel(FLanguageExchangeTrack
 	TrackedLabel.TargetPlacement = ComputePlacement(Detection, DistanceCentimeters);
 
 	// For checking the distance: measured as is, estimated with a tilde
-	if (ULanguageExchangeLabelWidget* const LabelWidget =
-		Cast<ULanguageExchangeLabelWidget>(TrackedLabel.Label->GetUserWidgetObject()))
-	{
-		const TCHAR* const EstimateMark = MeasuredDistanceCentimeters.IsSet() ? TEXT("") : TEXT("~");
-		LabelWidget->SetLabel(FText::FromString(FString::Printf(TEXT("%s %.2f  %s%.0f cm"),
-			*TrackedLabel.ShownClassName, TrackedLabel.ShownConfidence, EstimateMark, DistanceCentimeters)),
-			HighlightColor);
-	}
+	const TCHAR* const EstimateMark = MeasuredDistanceCentimeters.IsSet() ? TEXT("") : TEXT("~");
+	TrackedLabel.LabelText = FText::FromString(FString::Printf(TEXT("%s %.2f  %s%.0f cm"),
+		*TrackedLabel.ShownClassName, TrackedLabel.ShownConfidence, EstimateMark, DistanceCentimeters));
 }
 
 void ALanguageExchangeDetectionLabels::ShowTrackedLabel(const FLanguageExchangeTrackedLabel& TrackedLabel) const
 {
 	const LanguageExchange::UserInterface::FLabelPlacement& Placement = TrackedLabel.ShownPlacement;
+	const FLinearColor& Color = TrackedLabel.bIsPointed ? PointedColor : HighlightColor;
 
 	// Widget units are pixels: stretch the frame to the object's size, and give the line the same thickness in the
 	// room on all four edges
@@ -301,7 +337,7 @@ void ALanguageExchangeDetectionLabels::ShowTrackedLabel(const FLanguageExchangeT
 		Cast<ULanguageExchangeFrameWidget>(TrackedLabel.Frame->GetUserWidgetObject()))
 	{
 		const double LineThickness = FrameLineThicknessAtOneMeterCentimeters * Placement.DistanceCentimeters / 100.0;
-		FrameWidget->SetFrame(HighlightColor, FVector2D(LineThickness / FrameScale.X, LineThickness / FrameScale.Y));
+		FrameWidget->SetFrame(Color, FVector2D(LineThickness / FrameScale.X, LineThickness / FrameScale.Y));
 	}
 
 	// The label sits on the frame's top edge (its pivot is its bottom centre) and keeps its apparent size
@@ -310,6 +346,11 @@ void ALanguageExchangeDetectionLabels::ShowTrackedLabel(const FLanguageExchangeT
 	TrackedLabel.Label->SetWorldLocationAndRotation(FrameTopCentre, Placement.Rotation);
 	const double LabelWidth = LabelWidthAtOneMeterCentimeters * Placement.DistanceCentimeters / 100.0;
 	TrackedLabel.Label->SetWorldScale3D(FVector(LabelWidth / LabelSizePixels.X));
+	if (ULanguageExchangeLabelWidget* const LabelWidget =
+		Cast<ULanguageExchangeLabelWidget>(TrackedLabel.Label->GetUserWidgetObject()))
+	{
+		LabelWidget->SetLabel(TrackedLabel.LabelText, Color);
+	}
 }
 
 LanguageExchange::UserInterface::FLabelPlacement ALanguageExchangeDetectionLabels::ComputePlacement(
@@ -431,6 +472,7 @@ UMRUKSubsystem* ALanguageExchangeDetectionLabels::GetMixedRealitySubsystem() con
 FLanguageExchangeTrackedLabel ALanguageExchangeDetectionLabels::CreateTrackedLabel()
 {
 	FLanguageExchangeTrackedLabel TrackedLabel;
+	TrackedLabel.Id = NextTrackedLabelId++;
 	if (SpareFrames.IsEmpty())
 	{
 		TrackedLabel.Frame = CreateWidgetComponent(ULanguageExchangeFrameWidget::StaticClass(), FrameSizePixels,

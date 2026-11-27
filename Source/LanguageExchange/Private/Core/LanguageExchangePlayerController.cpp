@@ -2,6 +2,7 @@
 
 #include "Engine/World.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
+#include "Pointing/LanguageExchangePointer.h"
 #include "UI/LanguageExchangeDetectionLabels.h"
 #include "UI/LanguageExchangeDetectionWidget.h"
 
@@ -9,6 +10,7 @@ ALanguageExchangePlayerController::ALanguageExchangePlayerController()
 {
 	DetectionWidgetClass = ULanguageExchangeDetectionWidget::StaticClass();
 	DetectionLabelsClass = ALanguageExchangeDetectionLabels::StaticClass();
+	PointerClass = ALanguageExchangePointer::StaticClass();
 }
 
 void ALanguageExchangePlayerController::BeginPlay()
@@ -28,6 +30,15 @@ void ALanguageExchangePlayerController::BeginPlay()
 		{
 			DetectionLabels = GetWorld()->SpawnActor<ALanguageExchangeDetectionLabels>(DetectionLabelsClass);
 		}
+
+		// Owned by this controller, whose camera the beams face
+		if (PointerClass != nullptr)
+		{
+			FActorSpawnParameters SpawnParameters;
+			SpawnParameters.Owner = this;
+			Pointer = GetWorld()->SpawnActor<ALanguageExchangePointer>(PointerClass, SpawnParameters);
+			Pointer->SetDetectionLabels(DetectionLabels);
+		}
 	}
 	else if (DetectionWidgetClass != nullptr)
 	{
@@ -42,6 +53,12 @@ void ALanguageExchangePlayerController::EndPlay(const EEndPlayReason::Type EndPl
 	{
 		DetectionWidget->RemoveFromParent();
 		DetectionWidget = nullptr;
+	}
+
+	if (IsValid(Pointer))
+	{
+		Pointer->Destroy();
+		Pointer = nullptr;
 	}
 
 	if (IsValid(DetectionLabels))

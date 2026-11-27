@@ -29,6 +29,8 @@ public class LanguageExchange : ModuleRules
 			"NNE",
 			// MRUtilityKitSubsystem.h includes OculusXRAnchors' headers
 			"OculusXRAnchors",
+			// Hand tracking's pointing pose
+			"OculusXRInput",
 			// OculusXRPassthrough's public headers include OculusXRHMD's
 			"OculusXRHMD",
 			"OculusXRPassthrough",
