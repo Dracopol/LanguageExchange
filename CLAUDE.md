@@ -63,6 +63,19 @@ Planned pieces:
    of the detections, for checking rendering without detection.
    Next: real depth (e.g. MRUK's room mesh or Meta's depth API); then pointing.
 
+### Testing over Link (instead of building for the Quest)
+
+Works: passthrough, the headset camera (640 x 480) and detection on the PC (~50 ms), labels in the room.
+Use it for everything except speed measurements, which need a Quest build.
+- Link PC app: Meta Horizon Link set as the active OpenXR runtime; Beta > Developer Runtime Features and
+  Passthrough over Meta Horizon Link on. In the headset: Quick Settings > Link.
+- Start the editor while Link is running, then Play > VR Preview with the headset on. If Link restarts (e.g. another
+  headset), the editor's OpenXR connection is lost (`XR_ERROR_INSTANCE_LOST`, VR Preview greyed out): restart it.
+- `r.PostProcessing.PropagateAlpha=True` (desktop renderer only; the Quest uses `r.Mobile.PropagateAlpha`): without
+  it the PC writes no alpha, and the headset shows passthrough but nothing of the app.
+- MRUK's camera stop crashes the editor when play ends on PC, so `ULanguageExchangeHeadsetCameraSource::Close` only
+  stops the camera on Android.
+
 Open for later: LiteRT (option B) as a comparison to ONNX Runtime; display rate 90/120 Hz; a world-space status
 display instead of the 2D overlay (not visible in VR).
 
@@ -233,5 +246,5 @@ performance on Quest.
 - B (fallback if the Quest is too slow): still a standalone app, but camera frames go over Wi-Fi to a PC/server
   for detection (adds about 50–150 ms; camera images leave the headset).
 - C: PCVR via Link: not the product, but useful for development. Meta's MRUK docs say the Passthrough Camera API
-  works over Meta Horizon Link v201+ (unverified here), which would let camera + detection be developed from the PC.
+  works over Meta Horizon Link v201+; confirmed here (see "Testing over Link").
   PCVR is useful for the non-camera parts too (UI, multiplayer, word lists).

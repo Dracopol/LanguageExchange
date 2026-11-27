@@ -52,10 +52,14 @@ void ULanguageExchangeHeadsetCameraSource::Open()
 
 void ULanguageExchangeHeadsetCameraSource::Close()
 {
+	// On PC (Link), MRUK's camera stop crashes inside its native library when play ends (the XR session is already
+	// gone by then), so the camera is only stopped on the headset itself
+#if PLATFORM_ANDROID
 	if (IsValid(CameraAccess) && CameraAccess->IsCameraPlaying())
 	{
 		CameraAccess->Stop();
 	}
+#endif
 }
 
 UTexture* ULanguageExchangeHeadsetCameraSource::GetTexture() const
