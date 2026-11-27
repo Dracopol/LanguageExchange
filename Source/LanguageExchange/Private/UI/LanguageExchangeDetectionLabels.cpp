@@ -23,12 +23,26 @@ namespace LanguageExchange::UserInterface
 		constexpr int32 TopRight = 1;
 		constexpr int32 BottomRight = 2;
 		constexpr int32 BottomLeft = 3;
+
+		double GetAngleRadians(const FVector& DirectionA, const FVector& DirectionB)
+		{
+			return FMath::Acos(FMath::Clamp(FVector::DotProduct(DirectionA, DirectionB), -1.0, 1.0));
+		}
+
+		// The larger of the box's width and height, as an angle seen from the camera
+		double GetAngularSizeRadians(const TConstArrayView<FVector> CornerDirections)
+		{
+			return FMath::Max(GetAngleRadians(CornerDirections[TopLeft], CornerDirections[TopRight]),
+				GetAngleRadians(CornerDirections[TopLeft], CornerDirections[BottomLeft]));
+		}
 	}
 }
 
 ALanguageExchangeDetectionLabels::ALanguageExchangeDetectionLabels()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// Ticks only while objects are shown, to glide their frames and hide the ones no longer detected
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	RootSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(RootSceneComponent);
@@ -75,36 +89,185 @@ void ALanguageExchangeDetectionLabels::EndPlay(const EEndPlayReason::Type EndPla
 	Super::EndPlay(EndPlayReason);
 }
 
-void ALanguageExchangeDetectionLabels::HandleDetectionsChange(
-	const TConstArrayView<FLanguageExchangeDetection> Detections)
+void ALanguageExchangeDetectionLabels::Tick(const float DeltaSeconds)
 {
-	int32 ShownCount = 0;
-	for (const FLanguageExchangeDetection& Detection : Detections)
+	Super::Tick(DeltaSeconds);
+
+	// The same share of the remaining way per unit of time, whatever the frame rate
+	const double NowSeconds = GetWorld()->GetTimeSeconds();
+	const double Alpha = 1.0 - FMath::Exp(-DeltaSeconds / GlideSeconds);
+	for (int32 Index = TrackedLabels.Num() - 1; Index >= 0; --Index)
 	{
-		// Needs the four corner rays (top left, top right, bottom right, bottom left)
-		if (!Detection.bHasWorldRay || Detection.WorldCornerDirections.Num() != 4)
+		FLanguageExchangeTrackedLabel& TrackedLabel = TrackedLabels[Index];
+		if (NowSeconds - TrackedLabel.LastSeenSeconds > HoldSeconds)
 		{
+			ReleaseTrackedLabel(TrackedLabel);
+			TrackedLabels.RemoveAtSwap(Index);
 			continue;
 		}
-		ShowDetection(ShownCount, Detection);
-		++ShownCount;
+		TrackedLabel.ShownPlacement = TrackedLabel.ShownPlacement.MoveToward(TrackedLabel.TargetPlacement, Alpha);
+		ShowTrackedLabel(TrackedLabel);
 	}
 
-	for (int32 Index = ShownCount; Index < Labels.Num(); ++Index)
+	if (TrackedLabels.IsEmpty())
 	{
-		Labels[Index]->SetVisibility(false);
-		Frames[Index]->SetVisibility(false);
+		SetActorTickEnabled(false);
 	}
 }
 
-void ALanguageExchangeDetectionLabels::ShowDetection(const int32 DetectionIndex,
-	const FLanguageExchangeDetection& Detection)
+void ALanguageExchangeDetectionLabels::HandleDetectionsChange(
+	const TConstArrayView<FLanguageExchangeDetection> Detections)
+{
+	const double NowSeconds = GetWorld()->GetTimeSeconds();
+
+	// Needs the four corner rays (top left, top right, bottom right, bottom left)
+	TArray<const FLanguageExchangeDetection*, TInlineAllocator<16>> UsableDetections;
+	for (const FLanguageExchangeDetection& Detection : Detections)
+	{
+		if (Detection.bHasWorldRay && Detection.WorldCornerDirections.Num() == 4)
+		{
+			UsableDetections.Add(&Detection);
+		}
+	}
+
+	// Pair detections with shown objects, closest directions first; each takes part in at most one pair
+	TArray<TTuple<double, int32, int32>> Candidates;
+	for (int32 DetectionIndex = 0; DetectionIndex < UsableDetections.Num(); ++DetectionIndex)
+	{
+		const FLanguageExchangeDetection& Detection = *UsableDetections[DetectionIndex];
+		const double MaximumAngle = GetMaximumMatchAngleRadians(Detection);
+		for (int32 TrackedIndex = 0; TrackedIndex < TrackedLabels.Num(); ++TrackedIndex)
+		{
+			const double Angle = GetMatchAngleRadians(TrackedLabels[TrackedIndex], Detection);
+			if (Angle <= MaximumAngle)
+			{
+				Candidates.Add(MakeTuple(Angle, DetectionIndex, TrackedIndex));
+			}
+		}
+	}
+	Candidates.Sort([](const TTuple<double, int32, int32>& A, const TTuple<double, int32, int32>& B)
+		{ return A.Get<0>() < B.Get<0>(); });
+
+	TArray<bool> IsDetectionMatched;
+	IsDetectionMatched.Init(false, UsableDetections.Num());
+	TArray<bool> IsTrackedLabelMatched;
+	IsTrackedLabelMatched.Init(false, TrackedLabels.Num());
+	for (const TTuple<double, int32, int32>& Candidate : Candidates)
+	{
+		const int32 DetectionIndex = Candidate.Get<1>();
+		const int32 TrackedIndex = Candidate.Get<2>();
+		if (!IsDetectionMatched[DetectionIndex] && !IsTrackedLabelMatched[TrackedIndex])
+		{
+			UpdateTrackedLabel(TrackedLabels[TrackedIndex], *UsableDetections[DetectionIndex], NowSeconds);
+			IsDetectionMatched[DetectionIndex] = true;
+			IsTrackedLabelMatched[TrackedIndex] = true;
+		}
+	}
+
+	// New objects appear right where they were detected; unmatched shown ones stay until they time out in Tick
+	for (int32 DetectionIndex = 0; DetectionIndex < UsableDetections.Num(); ++DetectionIndex)
+	{
+		if (!IsDetectionMatched[DetectionIndex])
+		{
+			FLanguageExchangeTrackedLabel& TrackedLabel = TrackedLabels.Add_GetRef(CreateTrackedLabel());
+			UpdateTrackedLabel(TrackedLabel, *UsableDetections[DetectionIndex], NowSeconds);
+			TrackedLabel.ShownPlacement = TrackedLabel.TargetPlacement;
+			ShowTrackedLabel(TrackedLabel);
+		}
+	}
+
+	if (!TrackedLabels.IsEmpty())
+	{
+		SetActorTickEnabled(true);
+	}
+}
+
+double ALanguageExchangeDetectionLabels::GetMatchAngleRadians(const FLanguageExchangeTrackedLabel& TrackedLabel,
+	const FLanguageExchangeDetection& Detection) const
+{
+	using namespace LanguageExchange::UserInterface;
+
+	const FVector TowardTrackedLabel = (TrackedLabel.TargetPlacement.Centre - Detection.WorldRayOrigin).GetSafeNormal();
+	return GetAngleRadians(TowardTrackedLabel, Detection.WorldRayDirection);
+}
+
+double ALanguageExchangeDetectionLabels::GetMaximumMatchAngleRadians(const FLanguageExchangeDetection& Detection) const
+{
+	using namespace LanguageExchange::UserInterface;
+
+	return FMath::Max(FMath::DegreesToRadians(static_cast<double>(MinimumMatchAngleDegrees)),
+		GetAngularSizeRadians(Detection.WorldCornerDirections) * 0.5);
+}
+
+void ALanguageExchangeDetectionLabels::UpdateTrackedLabel(FLanguageExchangeTrackedLabel& TrackedLabel,
+	const FLanguageExchangeDetection& Detection, const double NowSeconds) const
+{
+	// Older detections fade, so the name follows what the object was detected as over the last moment
+	const float Fade = FMath::Exp(-static_cast<float>(NowSeconds - TrackedLabel.LastSeenSeconds) / ClassMemorySeconds);
+	for (TPair<FString, float>& ClassScore : TrackedLabel.ClassScores)
+	{
+		ClassScore.Value *= Fade;
+	}
+	TrackedLabel.ClassScores.FindOrAdd(Detection.ClassName) += Detection.Confidence;
+	TrackedLabel.LastSeenSeconds = NowSeconds;
+
+	const TPair<FString, float>* StrongestClassScore = nullptr;
+	for (const TPair<FString, float>& ClassScore : TrackedLabel.ClassScores)
+	{
+		if (StrongestClassScore == nullptr || ClassScore.Value > StrongestClassScore->Value)
+		{
+			StrongestClassScore = &ClassScore;
+		}
+	}
+	TrackedLabel.ShownClassName = StrongestClassScore->Key;
+	if (Detection.ClassName == TrackedLabel.ShownClassName)
+	{
+		TrackedLabel.ShownConfidence = Detection.Confidence;
+	}
+
+	// The shown class also sets the distance estimate, so a brief misdetection doesn't throw the frame off
+	TrackedLabel.TargetPlacement = ComputePlacement(Detection, TrackedLabel.ShownClassName);
+
+	if (ULanguageExchangeLabelWidget* const LabelWidget =
+		Cast<ULanguageExchangeLabelWidget>(TrackedLabel.Label->GetUserWidgetObject()))
+	{
+		LabelWidget->SetLabel(FText::FromString(FString::Printf(TEXT("%s %.2f"), *TrackedLabel.ShownClassName,
+			TrackedLabel.ShownConfidence)), HighlightColor);
+	}
+}
+
+void ALanguageExchangeDetectionLabels::ShowTrackedLabel(const FLanguageExchangeTrackedLabel& TrackedLabel) const
+{
+	const LanguageExchange::UserInterface::FLabelPlacement& Placement = TrackedLabel.ShownPlacement;
+
+	// Widget units are pixels: stretch the frame to the object's size, and give the line the same thickness in the
+	// room on all four edges
+	const FVector2D FrameScale = Placement.SizeCentimeters / FVector2D(FrameSizePixels);
+	TrackedLabel.Frame->SetWorldLocationAndRotation(Placement.Centre, Placement.Rotation);
+	TrackedLabel.Frame->SetWorldScale3D(FVector(1.0, FrameScale.X, FrameScale.Y));
+	if (ULanguageExchangeFrameWidget* const FrameWidget =
+		Cast<ULanguageExchangeFrameWidget>(TrackedLabel.Frame->GetUserWidgetObject()))
+	{
+		const double LineThickness = FrameLineThicknessAtOneMeterCentimeters * Placement.DistanceCentimeters / 100.0;
+		FrameWidget->SetFrame(HighlightColor, FVector2D(LineThickness / FrameScale.X, LineThickness / FrameScale.Y));
+	}
+
+	// The label sits on the frame's top edge (its pivot is its bottom centre) and keeps its apparent size
+	const FVector FrameTopCentre =
+		Placement.Centre + Placement.Rotation.GetUpVector() * (Placement.SizeCentimeters.Y * 0.5);
+	TrackedLabel.Label->SetWorldLocationAndRotation(FrameTopCentre, Placement.Rotation);
+	const double LabelWidth = LabelWidthAtOneMeterCentimeters * Placement.DistanceCentimeters / 100.0;
+	TrackedLabel.Label->SetWorldScale3D(FVector(LabelWidth / LabelSizePixels.X));
+}
+
+LanguageExchange::UserInterface::FLabelPlacement ALanguageExchangeDetectionLabels::ComputePlacement(
+	const FLanguageExchangeDetection& Detection, const FString& ClassName) const
 {
 	using namespace LanguageExchange::UserInterface;
 
 	// The frame lies in a plane facing the camera at the object's estimated distance; each corner is where its ray
 	// meets that plane
-	const float DistanceCentimeters = EstimateDistanceCentimeters(Detection);
+	const float DistanceCentimeters = EstimateDistanceCentimeters(ClassName, Detection.WorldCornerDirections);
 	const FVector& Origin = Detection.WorldRayOrigin;
 	const FVector& CentreDirection = Detection.WorldRayDirection;
 	const FVector PlaneCentre = Origin + CentreDirection * DistanceCentimeters;
@@ -124,9 +287,7 @@ void ALanguageExchangeDetectionLabels::ShowDetection(const int32 DetectionIndex,
 	}
 
 	// Widgets face along their X axis
-	const FVector TowardCamera = -CentreDirection;
-	const FMatrix Facing = FRotationMatrix::MakeFromXZ(TowardCamera, UpInPlane);
-	const FRotator FacingRotation = Facing.Rotator();
+	const FMatrix Facing = FRotationMatrix::MakeFromXZ(-CentreDirection, UpInPlane);
 	const FVector FrameRight = Facing.GetUnitAxis(EAxis::Y);
 	const FVector FrameUp = Facing.GetUnitAxis(EAxis::Z);
 
@@ -137,76 +298,29 @@ void ALanguageExchangeDetectionLabels::ShowDetection(const int32 DetectionIndex,
 		const FVector Offset = Corner - PlaneCentre;
 		Extent += FVector2D(FVector::DotProduct(Offset, FrameRight), FVector::DotProduct(Offset, FrameUp));
 	}
+
+	FLabelPlacement Placement;
 	const FVector2D ExtentCentre = Extent.GetCenter();
-	const FVector FrameCentre = PlaneCentre + FrameRight * ExtentCentre.X + FrameUp * ExtentCentre.Y;
-	const double FrameWidth = FMath::Max(Extent.GetSize().X, 0.1);
-	const double FrameHeight = FMath::Max(Extent.GetSize().Y, 0.1);
-
-	UWidgetComponent* const Frame = GetOrCreateWidget(Frames, DetectionIndex,
-		ULanguageExchangeFrameWidget::StaticClass(), FrameSizePixels, FVector2D(0.5, 0.5));
-	Frame->SetWorldLocationAndRotation(FrameCentre, FacingRotation);
-	// Widget units are pixels: stretch the frame to the object's size, and give the line the same thickness in the
-	// room on all four edges
-	const FVector2D FrameScale(FrameWidth / FrameSizePixels.X, FrameHeight / FrameSizePixels.Y);
-	Frame->SetWorldScale3D(FVector(1.0, FrameScale.X, FrameScale.Y));
-	if (ULanguageExchangeFrameWidget* const FrameWidget =
-		Cast<ULanguageExchangeFrameWidget>(Frame->GetUserWidgetObject()))
-	{
-		const double LineThickness = FrameLineThicknessAtOneMeterCentimeters * DistanceCentimeters / 100.0;
-		FrameWidget->SetFrame(HighlightColor, FVector2D(LineThickness / FrameScale.X, LineThickness / FrameScale.Y));
-	}
-	Frame->SetVisibility(true);
-
-	// The label sits on the frame's top edge (its pivot is its bottom centre) and keeps its apparent size
-	UWidgetComponent* const Label = GetOrCreateWidget(Labels, DetectionIndex,
-		ULanguageExchangeLabelWidget::StaticClass(), LabelSizePixels, FVector2D(0.5, 1.0));
-	const FVector FrameTopCentre = FrameCentre + FrameUp * (FrameHeight * 0.5);
-	Label->SetWorldLocationAndRotation(FrameTopCentre, FacingRotation);
-	const double LabelWidth = LabelWidthAtOneMeterCentimeters * DistanceCentimeters / 100.0;
-	Label->SetWorldScale3D(FVector(LabelWidth / LabelSizePixels.X));
-	if (ULanguageExchangeLabelWidget* const LabelWidget =
-		Cast<ULanguageExchangeLabelWidget>(Label->GetUserWidgetObject()))
-	{
-		LabelWidget->SetLabel(FText::FromString(FString::Printf(TEXT("%s %.2f"), *Detection.ClassName,
-			Detection.Confidence)), HighlightColor);
-	}
-	Label->SetVisibility(true);
+	Placement.Centre = PlaneCentre + FrameRight * ExtentCentre.X + FrameUp * ExtentCentre.Y;
+	Placement.Rotation = Facing.ToQuat();
+	Placement.SizeCentimeters = FVector2D::Max(Extent.GetSize(), FVector2D(0.1, 0.1));
+	Placement.DistanceCentimeters = DistanceCentimeters;
+	return Placement;
 }
 
-void ALanguageExchangeDetectionLabels::ShowTestLabel()
-{
-	// A made-up detection 1 m in front of the start position, about 20 cm in size
-	FLanguageExchangeDetection Detection;
-	Detection.ClassName = TEXT("test");
-	Detection.Confidence = 1.0f;
-	Detection.bHasWorldRay = true;
-	Detection.WorldRayOrigin = FVector(0.0, 0.0, 150.0);
-	Detection.WorldRayDirection = FVector::ForwardVector;
-	for (const FVector2D& Corner : { FVector2D(-1, 1), FVector2D(1, 1), FVector2D(1, -1), FVector2D(-1, -1) })
-	{
-		Detection.WorldCornerDirections.Add(FVector(1.0, Corner.X * 0.1, Corner.Y * 0.1).GetSafeNormal());
-	}
-	ShowDetection(0, Detection);
-	UE_LOG(LogLanguageExchange, Log, TEXT("Showing a test label instead of detections"));
-}
-
-float ALanguageExchangeDetectionLabels::EstimateDistanceCentimeters(const FLanguageExchangeDetection& Detection) const
+float ALanguageExchangeDetectionLabels::EstimateDistanceCentimeters(const FString& ClassName,
+	const TConstArrayView<FVector> CornerDirections) const
 {
 	using namespace LanguageExchange::UserInterface;
 
-	const float* const TypicalSize = TypicalSizeCentimeters.Find(Detection.ClassName);
+	const float* const TypicalSize = TypicalSizeCentimeters.Find(ClassName);
 	if (TypicalSize == nullptr)
 	{
 		return DefaultDistanceCentimeters;
 	}
 
 	// Assume the object's largest dimension spans the box's larger angle
-	const TArray<FVector>& Directions = Detection.WorldCornerDirections;
-	const double WidthAngle = FMath::Acos(FMath::Clamp(FVector::DotProduct(Directions[TopLeft], Directions[TopRight]),
-		-1.0, 1.0));
-	const double HeightAngle = FMath::Acos(FMath::Clamp(
-		FVector::DotProduct(Directions[TopLeft], Directions[BottomLeft]), -1.0, 1.0));
-	const double Angle = FMath::Max(WidthAngle, HeightAngle);
+	const double Angle = GetAngularSizeRadians(CornerDirections);
 	if (Angle <= UE_KINDA_SMALL_NUMBER)
 	{
 		return DefaultDistanceCentimeters;
@@ -216,14 +330,45 @@ float ALanguageExchangeDetectionLabels::EstimateDistanceCentimeters(const FLangu
 	return FMath::Clamp(static_cast<float>(Distance), MinimumDistanceCentimeters, MaximumDistanceCentimeters);
 }
 
-UWidgetComponent* ALanguageExchangeDetectionLabels::GetOrCreateWidget(TArray<TObjectPtr<UWidgetComponent>>& Pool,
-	const int32 Index, const TSubclassOf<UUserWidget> WidgetClass, const FIntPoint& SizePixels, const FVector2D& Pivot)
+FLanguageExchangeTrackedLabel ALanguageExchangeDetectionLabels::CreateTrackedLabel()
 {
-	if (Pool.IsValidIndex(Index))
+	FLanguageExchangeTrackedLabel TrackedLabel;
+	if (SpareFrames.IsEmpty())
 	{
-		return Pool[Index];
+		TrackedLabel.Frame = CreateWidgetComponent(ULanguageExchangeFrameWidget::StaticClass(), FrameSizePixels,
+			FVector2D(0.5, 0.5));
+	}
+	else
+	{
+		TrackedLabel.Frame = SpareFrames.Pop();
 	}
 
+	if (SpareLabels.IsEmpty())
+	{
+		TrackedLabel.Label = CreateWidgetComponent(ULanguageExchangeLabelWidget::StaticClass(), LabelSizePixels,
+			FVector2D(0.5, 1.0));
+	}
+	else
+	{
+		TrackedLabel.Label = SpareLabels.Pop();
+	}
+
+	TrackedLabel.Frame->SetVisibility(true);
+	TrackedLabel.Label->SetVisibility(true);
+	return TrackedLabel;
+}
+
+void ALanguageExchangeDetectionLabels::ReleaseTrackedLabel(const FLanguageExchangeTrackedLabel& TrackedLabel)
+{
+	TrackedLabel.Frame->SetVisibility(false);
+	TrackedLabel.Label->SetVisibility(false);
+	SpareFrames.Add(TrackedLabel.Frame);
+	SpareLabels.Add(TrackedLabel.Label);
+}
+
+UWidgetComponent* ALanguageExchangeDetectionLabels::CreateWidgetComponent(const TSubclassOf<UUserWidget> WidgetClass,
+	const FIntPoint& SizePixels, const FVector2D& Pivot)
+{
 	UWidgetComponent* const Widget = NewObject<UWidgetComponent>(this);
 	Widget->SetupAttachment(RootSceneComponent);
 	Widget->SetAbsolute(true, true, true);
@@ -235,6 +380,26 @@ UWidgetComponent* ALanguageExchangeDetectionLabels::GetOrCreateWidget(TArray<TOb
 	Widget->SetTwoSided(true);
 	Widget->RegisterComponent();
 	Widget->InitWidget();
-	Pool.Add(Widget);
 	return Widget;
+}
+
+void ALanguageExchangeDetectionLabels::ShowTestLabel()
+{
+	// A made-up detection 1 m in front of the start position, about 20 cm in size, that never times out
+	FLanguageExchangeDetection Detection;
+	Detection.ClassName = TEXT("test");
+	Detection.Confidence = 1.0f;
+	Detection.bHasWorldRay = true;
+	Detection.WorldRayOrigin = FVector(0.0, 0.0, 150.0);
+	Detection.WorldRayDirection = FVector::ForwardVector;
+	for (const FVector2D& Corner : { FVector2D(-1, 1), FVector2D(1, 1), FVector2D(1, -1), FVector2D(-1, -1) })
+	{
+		Detection.WorldCornerDirections.Add(FVector(1.0, Corner.X * 0.1, Corner.Y * 0.1).GetSafeNormal());
+	}
+
+	FLanguageExchangeTrackedLabel& TrackedLabel = TrackedLabels.Add_GetRef(CreateTrackedLabel());
+	UpdateTrackedLabel(TrackedLabel, Detection, static_cast<double>(TNumericLimits<float>::Max()));
+	TrackedLabel.ShownPlacement = TrackedLabel.TargetPlacement;
+	ShowTrackedLabel(TrackedLabel);
+	UE_LOG(LogLanguageExchange, Log, TEXT("Showing a test label instead of detections"));
 }

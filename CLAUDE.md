@@ -54,10 +54,14 @@ Planned pieces:
    `TryGetImageRay` flips Y. Without that, boxes were mirrored vertically: right straight ahead, but moving up when
    looking up.
    Tested on Quest 3: frames fit the objects, even lines, both eyes, 72 FPS.
+   Smoothing: each detection is matched to a shown object by direction from the camera (within 4° or half the
+   box size; closest pairs first). Its frame then glides to the new place (`GlideSeconds` 0.1), objects stay shown
+   1 s after their last detection (`HoldSeconds`), and the name is the class with the highest confidence sum, fading
+   over about 1 s (`ClassMemorySeconds`; it also picks the typical size for the distance). The actor ticks only while
+   objects are shown. Tested on Quest 3: no more flicker.
    Console variable `LanguageExchange.Labels.ShowTestLabel 1` (at startup) shows one fixed label 1 m ahead instead
    of the detections, for checking rendering without detection.
-   Next: smooth labels over time (they're replaced 4x per second and flicker); real depth (e.g. MRUK's room mesh or
-   Meta's depth API); then pointing.
+   Next: real depth (e.g. MRUK's room mesh or Meta's depth API); then pointing.
 
 Open for later: LiteRT (option B) as a comparison to ONNX Runtime; display rate 90/120 Hz; a world-space status
 display instead of the 2D overlay (not visible in VR).
