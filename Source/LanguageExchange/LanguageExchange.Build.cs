@@ -27,6 +27,8 @@ public class LanguageExchange : ModuleRules
 			"MediaAssets",
 			"MRUtilityKit",
 			"NNE",
+			// MRUtilityKitSubsystem.h includes OculusXRAnchors' headers
+			"OculusXRAnchors",
 			// OculusXRPassthrough's public headers include OculusXRHMD's
 			"OculusXRHMD",
 			"OculusXRPassthrough",

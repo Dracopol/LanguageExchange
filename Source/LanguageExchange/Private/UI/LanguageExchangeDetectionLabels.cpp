@@ -2,9 +2,11 @@
 
 #include "Components/WidgetComponent.h"
 #include "Detection/LanguageExchangeObjectDetectionSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "LanguageExchange.h"
+#include "MRUtilityKitSubsystem.h"
 #include "UI/LanguageExchangeFrameWidget.h"
 #include "UI/LanguageExchangeLabelWidget.h"
 
@@ -17,6 +19,12 @@ namespace LanguageExchange::UserInterface
 			TEXT("LanguageExchange.Labels.ShowTestLabel"),
 			false,
 			TEXT("Show one fixed test label 1 m in front of the start position instead of the detections"));
+
+		// For comparing measured and estimated distances while playing
+		TAutoConsoleVariable<bool> UseDepthVariable(
+			TEXT("LanguageExchange.Labels.UseDepth"),
+			true,
+			TEXT("Place objects at the distance measured by the headset's depth sensing (else: estimated from size)"));
 
 		// Corner order of FLanguageExchangeDetection::WorldCornerDirections
 		constexpr int32 TopLeft = 0;
@@ -76,6 +84,12 @@ void ALanguageExchangeDetectionLabels::BeginPlay()
 		DetectionsChangeHandle =
 			DetectionSubsystem->OnDetectionsChange.AddUObject(this, &ThisClass::HandleDetectionsChange);
 	}
+
+	// Takes a few frames to get ready; until then, and if it fails, distances are estimated
+	if (UMRUKSubsystem* const MixedRealitySubsystem = GetMixedRealitySubsystem())
+	{
+		MixedRealitySubsystem->CreateEnvironmentRaycaster();
+	}
 }
 
 void ALanguageExchangeDetectionLabels::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -85,6 +99,15 @@ void ALanguageExchangeDetectionLabels::EndPlay(const EEndPlayReason::Type EndPla
 	{
 		DetectionSubsystem->OnDetectionsChange.Remove(DetectionsChangeHandle);
 	}
+
+	// On PC (Link), MRUK's native calls crash once play has ended (the XR session is already gone); there, MRUK's own
+	// cleanup releases the raycaster
+#if PLATFORM_ANDROID
+	if (UMRUKSubsystem* const MixedRealitySubsystem = GetMixedRealitySubsystem())
+	{
+		MixedRealitySubsystem->DestroyEnvironmentRaycaster();
+	}
+#endif
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -130,6 +153,26 @@ void ALanguageExchangeDetectionLabels::HandleDetectionsChange(
 		}
 	}
 
+	// Measured while the image's camera pose still fits (the objects stay put while the head moves on); logged next to
+	// the size estimate for comparison
+	TArray<TOptional<float>, TInlineAllocator<16>> MeasuredDistances;
+	FString DistancesText;
+	for (const FLanguageExchangeDetection* const Detection : UsableDetections)
+	{
+		const TOptional<float>& MeasuredDistance = MeasuredDistances.Add_GetRef(MeasureDistanceCentimeters(*Detection));
+		const FString MeasuredText = MeasuredDistance.IsSet()
+			? FString::Printf(TEXT("%.0f cm"), MeasuredDistance.GetValue())
+			: FString(TEXT("none"));
+		const float EstimatedDistance =
+			EstimateDistanceCentimeters(Detection->ClassName, Detection->WorldCornerDirections);
+		DistancesText += FString::Printf(TEXT("%s%s depth %s, size %.0f cm"),
+			DistancesText.IsEmpty() ? TEXT("") : TEXT("; "), *Detection->ClassName, *MeasuredText, EstimatedDistance);
+	}
+	if (!DistancesText.IsEmpty())
+	{
+		UE_LOG(LogLanguageExchange, Log, TEXT("Distances: %s"), *DistancesText);
+	}
+
 	// Pair detections with shown objects, closest directions first; each takes part in at most one pair
 	TArray<TTuple<double, int32, int32>> Candidates;
 	for (int32 DetectionIndex = 0; DetectionIndex < UsableDetections.Num(); ++DetectionIndex)
@@ -158,7 +201,8 @@ void ALanguageExchangeDetectionLabels::HandleDetectionsChange(
 		const int32 TrackedIndex = Candidate.Get<2>();
 		if (!IsDetectionMatched[DetectionIndex] && !IsTrackedLabelMatched[TrackedIndex])
 		{
-			UpdateTrackedLabel(TrackedLabels[TrackedIndex], *UsableDetections[DetectionIndex], NowSeconds);
+			UpdateTrackedLabel(TrackedLabels[TrackedIndex], *UsableDetections[DetectionIndex],
+				MeasuredDistances[DetectionIndex], NowSeconds);
 			IsDetectionMatched[DetectionIndex] = true;
 			IsTrackedLabelMatched[TrackedIndex] = true;
 		}
@@ -170,7 +214,8 @@ void ALanguageExchangeDetectionLabels::HandleDetectionsChange(
 		if (!IsDetectionMatched[DetectionIndex])
 		{
 			FLanguageExchangeTrackedLabel& TrackedLabel = TrackedLabels.Add_GetRef(CreateTrackedLabel());
-			UpdateTrackedLabel(TrackedLabel, *UsableDetections[DetectionIndex], NowSeconds);
+			UpdateTrackedLabel(TrackedLabel, *UsableDetections[DetectionIndex], MeasuredDistances[DetectionIndex],
+				NowSeconds);
 			TrackedLabel.ShownPlacement = TrackedLabel.TargetPlacement;
 			ShowTrackedLabel(TrackedLabel);
 		}
@@ -200,7 +245,8 @@ double ALanguageExchangeDetectionLabels::GetMaximumMatchAngleRadians(const FLang
 }
 
 void ALanguageExchangeDetectionLabels::UpdateTrackedLabel(FLanguageExchangeTrackedLabel& TrackedLabel,
-	const FLanguageExchangeDetection& Detection, const double NowSeconds) const
+	const FLanguageExchangeDetection& Detection, const TOptional<float>& MeasuredDistanceCentimeters,
+	const double NowSeconds) const
 {
 	// Older detections fade, so the name follows what the object was detected as over the last moment
 	const float Fade = FMath::Exp(-static_cast<float>(NowSeconds - TrackedLabel.LastSeenSeconds) / ClassMemorySeconds);
@@ -225,14 +271,20 @@ void ALanguageExchangeDetectionLabels::UpdateTrackedLabel(FLanguageExchangeTrack
 		TrackedLabel.ShownConfidence = Detection.Confidence;
 	}
 
-	// The shown class also sets the distance estimate, so a brief misdetection doesn't throw the frame off
-	TrackedLabel.TargetPlacement = ComputePlacement(Detection, TrackedLabel.ShownClassName);
+	// Without a measurement, the shown class sets the distance estimate, so a brief misdetection doesn't throw the
+	// frame off
+	const float DistanceCentimeters = MeasuredDistanceCentimeters.Get(
+		EstimateDistanceCentimeters(TrackedLabel.ShownClassName, Detection.WorldCornerDirections));
+	TrackedLabel.TargetPlacement = ComputePlacement(Detection, DistanceCentimeters);
 
+	// For checking the distance: measured as is, estimated with a tilde
 	if (ULanguageExchangeLabelWidget* const LabelWidget =
 		Cast<ULanguageExchangeLabelWidget>(TrackedLabel.Label->GetUserWidgetObject()))
 	{
-		LabelWidget->SetLabel(FText::FromString(FString::Printf(TEXT("%s %.2f"), *TrackedLabel.ShownClassName,
-			TrackedLabel.ShownConfidence)), HighlightColor);
+		const TCHAR* const EstimateMark = MeasuredDistanceCentimeters.IsSet() ? TEXT("") : TEXT("~");
+		LabelWidget->SetLabel(FText::FromString(FString::Printf(TEXT("%s %.2f  %s%.0f cm"),
+			*TrackedLabel.ShownClassName, TrackedLabel.ShownConfidence, EstimateMark, DistanceCentimeters)),
+			HighlightColor);
 	}
 }
 
@@ -261,13 +313,12 @@ void ALanguageExchangeDetectionLabels::ShowTrackedLabel(const FLanguageExchangeT
 }
 
 LanguageExchange::UserInterface::FLabelPlacement ALanguageExchangeDetectionLabels::ComputePlacement(
-	const FLanguageExchangeDetection& Detection, const FString& ClassName) const
+	const FLanguageExchangeDetection& Detection, const float DistanceCentimeters) const
 {
 	using namespace LanguageExchange::UserInterface;
 
-	// The frame lies in a plane facing the camera at the object's estimated distance; each corner is where its ray
-	// meets that plane
-	const float DistanceCentimeters = EstimateDistanceCentimeters(ClassName, Detection.WorldCornerDirections);
+	// The frame lies in a plane facing the camera at the object's distance; each corner is where its ray meets that
+	// plane
 	const FVector& Origin = Detection.WorldRayOrigin;
 	const FVector& CentreDirection = Detection.WorldRayDirection;
 	const FVector PlaneCentre = Origin + CentreDirection * DistanceCentimeters;
@@ -308,6 +359,47 @@ LanguageExchange::UserInterface::FLabelPlacement ALanguageExchangeDetectionLabel
 	return Placement;
 }
 
+TOptional<float> ALanguageExchangeDetectionLabels::MeasureDistanceCentimeters(
+	const FLanguageExchangeDetection& Detection) const
+{
+	UMRUKSubsystem* const MixedRealitySubsystem = GetMixedRealitySubsystem();
+	if (!LanguageExchange::UserInterface::UseDepthVariable.GetValueOnGameThread() || !IsValid(MixedRealitySubsystem)
+		|| MixedRealitySubsystem->EnvironmentRaycasterStatus() != EMRUKEnvironmentRaycasterStatus::Ready)
+	{
+		return {};
+	}
+
+	// Rays through the box centre and halfway to each corner. Some may pass the object (through gaps, or past its
+	// edge) or hit something in front of it (a hand); the median outvotes them.
+	const FVector& Origin = Detection.WorldRayOrigin;
+	const FVector& CentreDirection = Detection.WorldRayDirection;
+	TArray<FVector, TInlineAllocator<5>> Directions = { CentreDirection };
+	for (const FVector& CornerDirection : Detection.WorldCornerDirections)
+	{
+		Directions.Add((CentreDirection + CornerDirection).GetSafeNormal());
+	}
+
+	TArray<double, TInlineAllocator<5>> Distances;
+	for (const FVector& Direction : Directions)
+	{
+		const FMRUKEnvironmentRaycastHit Hit =
+			MixedRealitySubsystem->RaycastEnvironment(Origin, Direction, MaximumDistanceCentimeters);
+		if (Hit.status == EMRUKEnvironmentRaycastHitStatus::Hit)
+		{
+			// Along the centre ray, which is how the frame's distance is measured
+			Distances.Add(FVector::DotProduct(Hit.point - Origin, CentreDirection));
+		}
+	}
+	if (Distances.IsEmpty())
+	{
+		return {};
+	}
+
+	Distances.Sort();
+	const double MedianDistance = Distances[Distances.Num() / 2];
+	return FMath::Clamp(static_cast<float>(MedianDistance), MinimumDistanceCentimeters, MaximumDistanceCentimeters);
+}
+
 float ALanguageExchangeDetectionLabels::EstimateDistanceCentimeters(const FString& ClassName,
 	const TConstArrayView<FVector> CornerDirections) const
 {
@@ -328,6 +420,12 @@ float ALanguageExchangeDetectionLabels::EstimateDistanceCentimeters(const FStrin
 
 	const double Distance = *TypicalSize / (2.0 * FMath::Tan(Angle * 0.5));
 	return FMath::Clamp(static_cast<float>(Distance), MinimumDistanceCentimeters, MaximumDistanceCentimeters);
+}
+
+UMRUKSubsystem* ALanguageExchangeDetectionLabels::GetMixedRealitySubsystem() const
+{
+	const UGameInstance* const GameInstance = GetGameInstance();
+	return IsValid(GameInstance) ? GameInstance->GetSubsystem<UMRUKSubsystem>() : nullptr;
 }
 
 FLanguageExchangeTrackedLabel ALanguageExchangeDetectionLabels::CreateTrackedLabel()
@@ -398,7 +496,7 @@ void ALanguageExchangeDetectionLabels::ShowTestLabel()
 	}
 
 	FLanguageExchangeTrackedLabel& TrackedLabel = TrackedLabels.Add_GetRef(CreateTrackedLabel());
-	UpdateTrackedLabel(TrackedLabel, Detection, static_cast<double>(TNumericLimits<float>::Max()));
+	UpdateTrackedLabel(TrackedLabel, Detection, {}, static_cast<double>(TNumericLimits<float>::Max()));
 	TrackedLabel.ShownPlacement = TrackedLabel.TargetPlacement;
 	ShowTrackedLabel(TrackedLabel);
 	UE_LOG(LogLanguageExchange, Log, TEXT("Showing a test label instead of detections"));

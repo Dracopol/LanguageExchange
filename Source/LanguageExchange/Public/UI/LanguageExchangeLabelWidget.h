@@ -26,9 +26,15 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|UI")
 	FLinearColor BackgroundColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.7f);
 
-	// Relative to the widget's height, so the text fills the panel at any draw size
+	// Relative to the widget's height, so the text fills the panel at any draw size; text wider than the widget is
+	// made smaller
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|UI", meta = (ClampMin = "0.1", ClampMax = "1"))
 	float FontSizeToHeightRatio = 0.55f;
+
+	// Space between the text and the panel's left and right edges, relative to the widget's height. The panel is as
+	// wide as its text, centred in the widget.
+	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|UI", meta = (ClampMin = "0", ClampMax = "1"))
+	float PaddingToHeightRatio = 0.25f;
 
 	// State
 	FText Text;

@@ -61,7 +61,14 @@ Planned pieces:
    objects are shown. Tested on Quest 3: no more flicker.
    Console variable `LanguageExchange.Labels.ShowTestLabel 1` (at startup) shows one fixed label 1 m ahead instead
    of the detections, for checking rendering without detection.
-   Next: real depth (e.g. MRUK's room mesh or Meta's depth API); then pointing.
+   Depth: the labels actor creates MRUK's environment raycaster (`UMRUKSubsystem::CreateEnvironmentRaycaster`, depth
+   sensing) and casts 5 rays per detection from the image's camera pose (box centre and halfway to each corner); the
+   median hit, measured along the centre ray, is the distance. Without a hit it falls back to the size estimate.
+   The label shows the distance (`~` = estimate); `LanguageExchange.Labels.UseDepth 0` switches depth off.
+   Works over Link (depth found for 315 of 316 detections). Not yet on Quest: needs the scene permission
+   (`com.oculus.permission.USE_SCENE`, manifest + runtime request). `OculusXRAnchors` is a module dependency because
+   `MRUtilityKitSubsystem.h` includes its headers.
+   Next: pointing (hand ray cast against the depth, then the detected object at that point).
 
 ### Testing over Link (instead of building for the Quest)
 

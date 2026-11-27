@@ -6,6 +6,7 @@
 #include "UI/LanguageExchangeTrackedLabel.h"
 #include "LanguageExchangeDetectionLabels.generated.h"
 
+class UMRUKSubsystem;
 class UUserWidget;
 class UWidgetComponent;
 
@@ -15,9 +16,10 @@ class UWidgetComponent;
 // camera), whose frame then glides to the new place; the name shown is the class the object was detected as most over
 // the last moment. Objects stay shown for a moment after their last detection, so a missed detection doesn't make
 // them flicker.
-// The camera image has no depth, so the distance is estimated from the object's typical size and how large it appears
-// (unknown classes use a fixed distance). Placed at the object's distance, frame and panel line up with it for both
-// eyes even though the camera sits a few centimetres from them.
+// The camera image has no depth, so the distance is measured with the headset's depth sensing (MRUK's environment
+// raycast through the box); without a depth hit it is estimated from the object's typical size and how large it
+// appears (unknown classes use a fixed distance). Placed at the object's distance, frame and panel line up with it for
+// both eyes even though the camera sits a few centimetres from them.
 UCLASS()
 class ALanguageExchangeDetectionLabels : public AActor
 {
@@ -44,11 +46,13 @@ private:
 		const FLanguageExchangeDetection& Detection) const;
 	double GetMaximumMatchAngleRadians(const FLanguageExchangeDetection& Detection) const;
 	void UpdateTrackedLabel(FLanguageExchangeTrackedLabel& TrackedLabel, const FLanguageExchangeDetection& Detection,
-		double NowSeconds) const;
+		const TOptional<float>& MeasuredDistanceCentimeters, double NowSeconds) const;
 	void ShowTrackedLabel(const FLanguageExchangeTrackedLabel& TrackedLabel) const;
 	LanguageExchange::UserInterface::FLabelPlacement ComputePlacement(const FLanguageExchangeDetection& Detection,
-		const FString& ClassName) const;
+		float DistanceCentimeters) const;
+	TOptional<float> MeasureDistanceCentimeters(const FLanguageExchangeDetection& Detection) const;
 	float EstimateDistanceCentimeters(const FString& ClassName, TConstArrayView<FVector> CornerDirections) const;
+	UMRUKSubsystem* GetMixedRealitySubsystem() const;
 	FLanguageExchangeTrackedLabel CreateTrackedLabel();
 	void ReleaseTrackedLabel(const FLanguageExchangeTrackedLabel& TrackedLabel);
 	UWidgetComponent* CreateWidgetComponent(TSubclassOf<UUserWidget> WidgetClass, const FIntPoint& SizePixels,
@@ -92,13 +96,14 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels", meta = (ClampMin = "0", Units = "deg"))
 	float MinimumMatchAngleDegrees = 4.0f;
 
-	// Panel width at 1 m distance; scaled with distance so the panel always looks the same size
+	// Label widget width at 1 m distance (the widest a panel gets; it fits its text); scaled with distance so labels
+	// always look the same size
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels", meta = (ClampMin = "1", Units = "cm"))
-	float LabelWidthAtOneMeterCentimeters = 15.0f;
+	float LabelWidthAtOneMeterCentimeters = 20.0f;
 
-	// Resolution of the label panel; its aspect ratio sets the panel's height
+	// Resolution of the label widget; its aspect ratio sets the panel's height
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels")
-	FIntPoint LabelSizePixels = FIntPoint(384, 96);
+	FIntPoint LabelSizePixels = FIntPoint(512, 96);
 
 	// Resolution of the frame widget, which is stretched to the object's size
 	UPROPERTY(EditDefaultsOnly, Category = "LanguageExchange|Labels")
